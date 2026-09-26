@@ -28,81 +28,66 @@ recipe ([`decision_config.json`](https://huggingface.co/akhilaaa3/Jev-Omni/raw/m
 The head is **0.008%** of the network. Which means "make this cheaper" is not a
 squeezing exercise — it is a question of *which pretrained backbone you attach it to*.
 
-### The seven findings that matter
+### The eight findings that matter
 
 **1. The design is "read a probability instead of generating a claim about one."**
 Jev-Omni's card is explicit: "Supply a question and options; receive a probability for
 each option — **not a generated explanation**." The head never runs a decode loop, so
 there is no "as an AI language model" refusal path, no parser, and no format repair. An
 independent reverse-engineering study of the *hosted* Jev product, based on 10,000 API
-calls, reached the same conclusion about the underlying pattern: "decision probabilities
-read directly from its internal representations" rather than
-"[generated] confidence claims" ([Archer Hume, 17 Sep 2026](https://archerhume.com/posts/jevs-architecture-unmasked/)).
-
-This is the load-bearing idea. Everything else is engineering.
+calls, reached the same conclusion about the pattern: "decision probabilities read
+directly from its internal representations" rather than "[generated] confidence claims"
+([Archer Hume, 17 Sep 2026](https://archerhume.com/posts/jevs-architecture-unmasked/)).
 
 **2. The 256 outputs are positional option slots, not vocabulary tokens.**
-`Linear(3840, 256)` — slot *i* means "option *i+1*". This is what lets one checkpoint
-answer a question it has never seen, with option words it has never seen, without
-retraining. It is the single most important structural decision, and it is what makes a
-350M model a viable substitute for a 12B one: the head cost scales with `hidden_size`,
-not with vocabulary or task count.
+`Linear(3840, 256)` — slot *i* is "option *i+1*". This is why one checkpoint answers a
+question it has never seen, with option words it has never seen, without retraining. It is
+why the head cost scales with `hidden_size` and nothing else, and therefore why the
+design survives being moved to a 34x smaller backbone.
 
-**3. The upstream "Jev" is closed, undocumented and un-reproduced.**
-TypeSafe AI's Jev is a hosted API at $0.042 per million input tokens. No weights, no
-paper, no published training method. Every open model in this family —
-`akhilaaa3/Jev-Omni`, `jaredpalmer/kev`, `getainode/jebadiah`, `NandhaKishorM/laya`,
-`FLock-io/this-that-model-1.0`, `logan-markewich/jeff` — is an independent
-reimplementation of the *pattern*, and each says so. The RCLD repo states it
-"does not reproduce TypeSafe.ai's proprietary Jev training method" in its own README.
-**No Jev output was used in training by any of them, including us.**
+**3. Fine-tuning the backbone is not optional — we measured it, we did not assume it.**
+Every published implementation in this ledger fine-tunes an adapter; this project assumed
+it without testing. On `LocalLLaMA/typed-decisions` / `customer_service`, identical data,
+splits and evaluation, changing only whether the backbone's weights can move:
 
-**4. Independent implementations converged on almost everything — and the
-disagreement that remains is the interesting one.**
-Converged: a small *trained* head rather than constrained decoding; a pretrained causal
-backbone fine-tuned with LoRA rather than training from scratch; a fitted temperature
-shipped with the model; per-question-type temperatures rather than one scalar; Brier or
-KL reported alongside ECE.
+| arm | accuracy | Brier | ECE | fitted T | coverage @5% error |
+|---|---:|---:|---:|---:|---:|
+| frozen backbone + head | 0.3233 | 0.1404 | 0.1467 | **3.300** | **0.0000** |
+| **LoRA r=16 + head** | **0.5633** | **0.1098** | **0.0646** | **1.050** | **0.0967** |
 
-Diverged on the read-out geometry: **slot logits** (Jev-Omni), **pointer scoring** where
-each option's own hidden state is scored against a decision position (Kev), or
-**label-token logits** restricted to the option words (Jebadiah, Laya, this-that-model).
-And a September 2026 paper found this choice is not neutral — see finding 7.
+**Claim class: our own measurement.** The coverage column is the finding. A frozen
+backbone and head has coverage **0.0000** at a 5% error budget — its single most
+confident prediction was wrong, and no threshold is both useful and safe. The temperature
+explains it: **3.300** against **1.050**. The frozen model does not merely score worse,
+it scores *dishonestly* worse.
 
-**5. The published training recipe is modest, which is the best news in this report.**
-24,000 examples. One epoch. LoRA rank 512, lr 1e-5, linear warmup then decay to 10% of
-peak, effective batch 32, 750 steps, four GPUs, seed 3407. The scale is in the *backbone*,
-not the fine-tune. A 350M model needs far fewer parameters in the adapter; our equivalent
-trainable set is **6,004,744** (LoRA 5,996,544 + head 8,200), **1.7%** of the network.
+**4. More data does not rescue the frozen arm.** With **1,212** training questions
+across all four workflows (3.4x the previous run) the frozen arm reaches accuracy 0.4357
+and temperature 1.800 — miscalibration roughly halved — and coverage@5% is still
+**0.0000** across 996 evaluation questions. **Data quantity and backbone fine-tuning are
+not substitutes.**
 
-**6. Liquid AI's LFM2.5 is a genuinely good fit, and its licence is a real constraint.**
-LFM2.5-350M is 16 layers — 10 short-convolution plus 6 grouped-query attention —
-`hidden_size` 1024, 28T training tokens, and Liquid explicitly recommends it for "data
-extraction, structured outputs, and tool use" while steering you *away* from
-knowledge-intensive tasks. That is a near-verbatim description of a decision model. It
-decodes at 30 tok/s on a Raspberry Pi 5 in 300 MB. It also decodes at 564 tok/s on an
-M5 Max.
+**5. The value is concentrated at the top of the confidence distribution.** The 10% most
+confident decisions are **93.3%** correct against 56.3% overall; the frozen arm manages
+50.0% on the same slice. And thresholds **do not transfer between workflows**: coverage
+at a 5% budget is 9.7% on `customer_service` and 5.5% on `invoice_processing`.
 
-But the weights are under the **LFM Open License v1.0**, which is *not* Apache-2.0 and
-*not* OSI-approved. Section 5 caps free commercial use at **USD 10,000,000** in annual
-revenue, exempting qualified non-profits for research use. **Your code can be MIT; your
-weights cannot be.** We read the full text; it contains no MAU threshold and no
-field-of-use restriction beyond that revenue cap.
+**6. Reading the last layer is correct — we swept it.** The strongest external claim
+behind the design (a *middle* layer is a better feature space for a linear head) comes
+from one unreplicated source on a 7B model. On LFM2.5-350M the final layer beat L0, L4,
+L8 and L12 on accuracy, Brier, ECE **and** training loss. The claim is **not replicated at
+this scale** `[single source: AnyJev, 7B, unreplicated]`.
 
-**7. There is a published, quantified failure mode that any small decision model must be
-tested for.**
-Renaming two options from `0`/`1` to `no`/`yes` — changing only which *name* is bound to
-which *rubric*, holding the question, state, rubric wording and name-set fixed — moved
-AUC from **.94 to .23** on 1,200 workflow decisions, changing 70.4 more answers per
-hundred (95% CI [67.6, 73.1]). AUC below 0.5 is a systematic ranking reversal, not
-uncertainty. The hosted Jev exhibits it too (.8146 → .5806). The type-error rate stayed
-**0%** throughout: a model can be perfectly schema-conformant and completely wrong
-([arXiv 2609.26758, 22 Sep 2026](https://arxiv.org/abs/2609.26758)).
+**7. The upstream "Jev" is closed and undocumented.** No weights, no paper, no published
+training method. Every open model here — Jev-Omni, Kev, Jebadiah, Laya,
+`this-that-model`, and this project — is an independent reimplementation of the *pattern*.
 
-The same paper found the effect is **4.1× weaker** in a model family that mean-pools over
-the option span, and that **random character-string option names eliminate it entirely
-at no accuracy cost**. That is a prompt-level fix, and it is the single highest-value
-hour in building one of these.
+**8. The strongest external support for the premise is a vendor-partner case study.** A
+350M student fine-tuned on *filtered* synthetic data from a **GPT-oss-120B teacher**
+reaches 98.0 / 96.7 / 95.9 on three structured-output tasks, **exceeding its 120B
+teacher on two of three** `[single source: distil labs, vendor partner, Tier B]`. The
+step that matters is the one people skip: *validate and filter the teacher's output*.
+
 
 ### What we built and verified
 
@@ -1177,17 +1162,20 @@ inherited from Kev, Jebadiah and Jev-Omni and had never been tested here. Identi
 data, splits and evaluation; read-out at the final layer; the only variable is whether
 the backbone's weights can move.
 
-| arm | accuracy | Brier ↓ | ECE ↓ | coverage @5% | fitted T | train loss |
-|---|---:|---:|---:|---:|---:|---:|
-| A — frozen backbone + head only | 0.2667 | 0.1371 | 0.1784 | 0.0667 | **2.400** | 1.2677 |
-| **B — LoRA r=16 all-linear + head** | **0.5778** | **0.1154** | **0.1204** | 0.0667 | **1.050** | **1.1630** |
-| delta | **+0.3111** | −0.0217 | −0.0580 | 0.0000 | −1.350 | −0.1047 |
+| arm | train Q | eval n | accuracy | Brier ↓ | ECE ↓ | fitted T | cov@5% | cov@20% |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| customer_service, frozen | 360 | 300 | 0.3233 | 0.1404 | 0.1467 | **3.300** | **0.0000** | 0.0000 |
+| customer_service, **LoRA** | 360 | 300 | **0.5633** | **0.1098** | **0.0646** | **1.050** | **0.0967** | **0.3367** |
+| invoice_processing, frozen | 240 | 200 | 0.4700 | 0.1502 | 0.0765 | **4.150** | 0.0300 | 0.0000 |
+| invoice_processing, **LoRA** | 240 | 200 | **0.6450** | **0.1204** | **0.0678** | **0.850** | **0.0550** | **0.2750** |
+| all 4 workflows, frozen | 1212 | 996 | 0.4357 | 0.1244 | 0.1040 | 1.800 | **0.0000** | — |
 
 **Claim class: our own measurement.** LoRA is worth **31.1 accuracy points** here. For
 scale, `typed-decisions` puts a base-rate `Prior` at 0.470; arm B clears it and arm A
 does not.
 
-**The more informative number is the fitted temperature: 2.400 → 1.050.** A large T means
+**The more informative number is the fitted temperature: 3.300 → 1.050** (and 4.150 →
+0.850 on `invoice_processing`). A large T means
 the raw logits are far more confident than the accuracy justifies. So a frozen
 head-only model does not merely score worse, it scores *dishonestly* worse — the
 probability a caller would threshold on does not mean what it appears to mean. This is
@@ -1195,9 +1183,23 @@ the concrete mechanism behind Jebadiah's reported observation that "accuracy was
 while ECE fell 0.086 → 0.019: the model did not learn to be right more often, it
 learned to be honest about when it isn't."
 
-**Weight:** n = 45 evaluation questions, one workflow of four, 198 training questions,
-3 epochs, CPU. This is a feasibility probe; published work uses 10k–24k examples. The
-claim is the **delta between arms**, not the endpoint.
+**The decisive column is coverage.** A frozen backbone and head has coverage **0.0000**
+at a 5% error budget in two of three configurations and 0.0300 in the third — no
+threshold is both useful and safe. LoRA reaches 0.0967 and 0.0550. At n = 300 a 5%
+budget permits 15 errors, so unlike the earlier n = 45 probe this is measurable.
+
+**Generalises on direction, not magnitude.** Two workflows: large accuracy delta,
+grossly overconfident frozen arm (T = 3.300 and 4.150), temperature near 1 after
+tuning (1.050 and 0.850). But coverage at a 5% budget is 9.7% on one workflow and 5.5%
+on the other. **A threshold tuned on one workflow will not transfer.**
+
+**More data does not rescue the frozen arm.** At 1,212 training questions across four
+workflows it reaches 0.4357 accuracy and T 1.800 — miscalibration roughly halved — and
+coverage@5% is still 0.0000 across 996 evaluation questions. Data quantity and backbone
+fine-tuning are not substitutes.
+
+**Weight:** 240–1,212 training questions, 3 CPU epochs, against a published norm of
+10k–24k. The claim is the **delta between arms** and the coverage gap, not the endpoint.
 
 **One inconsistency between our own experiments, disclosed.** The read-out layer sweep
 read *pre-norm* activations (hooking a layer module) while this experiment reads
@@ -1611,60 +1613,50 @@ performance claim. Liquid's own Q4 llama.cpp numbers (2.9K prefill tok/s on AMD 
 
 ## Key Takeaways
 
+The first eight are **our own measurements**; the rest are drawn from the literature and
+labelled by source. Every experiment is reproducible from `experiments/`.
+
 1. **The head is 0.008–0.074% of the model. Everything expensive is the backbone.**
-   Porting Jev-Omni's `_Head256` to LFM2.5 costs 262,400 parameters and 0.0740% of the
-   network. *(Verified by running it; bit-exact against the published reference.)*
+2. **Fine-tune the backbone, not just the head — measured, not assumed.** Frozen + head
+   0.3233 vs LoRA + head 0.5633 on the same 360 training questions; fitted temperature
+   **3.300 -> 1.050**.
+3. **A head-only model has no usable operating point.** Coverage at a 5% error budget is
+   **0.0000** — its most confident prediction was wrong. LoRA reaches 0.0967.
+4. **More data does not rescue the frozen arm.** 1,212 training questions across four
+   workflows halved its miscalibration (T 3.300 -> 1.800) and left coverage at 0.0000
+   across 996 eval questions.
+5. **The value is concentrated at the top of the confidence distribution.** The 10%
+   most-confident decisions are **93.3%** correct against 56.3% overall.
+6. **Thresholds do not transfer between workflows.** 9.7% coverage at a 5% budget on
+   `customer_service`, 5.5% on `invoice_processing`.
+7. **Coverage at a 5% budget needs hundreds of evaluation questions.** At n = 45 one early
+   error pins every budget below 25% to the same 3/45 and the metric carries no
+   information.
+8. **Read the last layer.** The final layer beat L0/L4/L8/L12 on accuracy, Brier, ECE and
+   training loss. AnyJev's middle-layer finding does **not** replicate at 350M.
+9. **Use slot logits, not label-token logits** (Kev, Jebadiah, Laya, this-that-model).
+   Positional, so one checkpoint handles 2–256 options.
+10. **Cross-entropy is a strictly proper scoring rule — you already have RLCD's main
+    benefit** (Laya and the scoring-rule literature).
+11. **Fit temperature per question type *and* per option-count bucket, against your soft
+    target** (Jebadiah's two fits; a published per-cardinality calibrator showing a 3.3x
+    spread by option count).
+12. **The ordinal kernel for `score` questions is the highest-leverage training decision**
+    (Jebadiah: Decision Score −21.4 → +11.9, ECE 0.39 → 0.045).
+13. **Use the instruction-tuned checkpoint** (Jebadiah: +2.15 headline points on the 4B).
+14. **Run the option-name and negation tests before shipping a threshold policy**
+    (arXiv 2609.26758; this-that-model's changelog).
+15. **Report KL and Brier next to ECE** (`typed-decisions`: the base-rate Prior has the
+    best ECE on the table while knowing nothing).
+16. **A 350M model is a specialist, not a generalist** (Laya zero-shot 0.345 against a
+    0.343 chance rate).
+17. **Your code can be MIT; your weights cannot** (LFM Open License v1.0, $10M revenue
+    cap, and **no** MAU threshold).
+18. **Start from LFM2.5-VL-450M for image; do not build a projector**
+    (`LFM2.5-VL-450M-Extract`: 98.9 / 98.8 / 84.5 at 0.45B).
+19. **Do not quantise the head, and refit temperature per format** (Jev-Omni Q4_K_M: max
+    probability difference 0.210; a published calibrator fits T per quantisation).
 
-2. **Use slot logits, not label-token logits.** They are positional, so one checkpoint
-   handles any question with 2–256 options and any option words. The label-token
-   alternative has a documented ceiling — Laya scores *exactly* 0.425 on 77 options
-   because options share a fixed token budget, on both checkpoints. The
-   September 2026 paper independently finds slot-style read-outs 4.1× more robust to the
-   option-name failure.
-
-3. **Cross-entropy is a strictly proper scoring rule — you already have RLCD's main
-   benefit.** No RL loop needed for the core property. RL proper training matters when
-   the reward is the *task's* correctness notion rather than the world's.
-
-4. **Fit the temperature per question type, against your soft target, not the argmax.**
-   Jebadiah ships both fits; the argmax fit sharpens (T 0.68/0.96/0.83) and measurably
-   hurt their rubric calibration. The soft fit is what they ship.
-
-5. **The ordinal kernel for `score` questions is the highest-leverage single decision.**
-   20% of mass on each adjacent level. Measured: Decision Score -21.4 → +11.9, ECE
-   0.39 → 0.045, accuracy unchanged.
-
-6. **Use the instruction-tuned checkpoint.** Jebadiah measured 2.15 headline points from
-   Base → chat-with-thinking-off — more than any data change they made across many
-   experiments.
-
-7. **Run the option-name test before you ship a threshold policy.** Renaming `0`/`1` to
-   `no`/`yes` moved AUC .94 → .23 on 1,200 decisions. Type-error rate stayed 0%
-   throughout. If you are affected, random-ish option identifiers fix it at no accuracy
-   cost.
-
-8. **Report KL and Brier next to ECE — and report coverage at your error budget.** A
-   base-rate predictor has the best ECE on the `typed-decisions` table (0.088) while being
-   useless. Kev-0.8B automates 14.5% of decisions at a 5% error budget; Jev automates 70%.
-
-9. **A 350M model is a specialist, not a generalist.** Laya zero-shot scores 0.345
-   against a 0.343 chance rate. The 42-point gap to its fine-tuned self (0.766) is the
-   whole story: *your data is the product.*
-
-10. **Your code can be MIT. Your weights cannot.** The LFM Open License v1.0 caps free
-    commercial use at USD 10M revenue and is not OSI-approved. No MAU threshold exists
-    (contrary to a common assumption). Say LFM Open License v1.0 in your model card.
-
-11. **Start from LFM2.5-VL-450M for image; do not build a projector.** Its 450M
-    task-specific sibling reaches 98.9 JSON validity / 98.8 schema F1, beating
-    generic 2.3B VLMs. Generic small VLMs (SmolVLM 33.0, FastVLM 22.5) cannot do
-    schema extraction at all — task-specific post-training, not scale, is what works.
-
-12. **Do not quantise the head, and re-measure calibration after any quantisation.** The
-    4-bit Jev-Omni card reports a max probability difference of 0.210 vs the fp32 source
-    and says plainly not to assume equivalent calibration.
-
----
 
 ## Limitations & Gaps
 
