@@ -1,0 +1,806 @@
+================================================================================
+JEB-OMNI-NANO: THE COMPLETE GUIDE
+Building a small, cheap, calibrated decision model on Liquid AI LFM2.5
+================================================================================
+
+Written for someone who has never trained a model.
+Read it start to finish the first time. It is long on purpose.
+
+Version      : 1.0
+Written      : 2026-09-26
+Research cut : 2026-09-26
+Code         : https://github.com/AliRezaei-Code/jeb-omni-nano
+Report       : .deep-research/research-report.md (200+ sources)
+Licence      : MIT for the code. Weights inherit the LFM Open License v1.0.
+
+--------------------------------------------------------------------------------
+WHAT THIS DOCUMENT IS
+--------------------------------------------------------------------------------
+
+You are going to build a model that answers questions like:
+
+    STATE:      "I was charged twice for order 4411. Please refund one charge."
+    QUESTION:   Which team should handle this?
+    OPTIONS:    1. billing  2. shipping  3. technical support
+    ANSWER:     billing, with probabilities {billing: 0.91, shipping: 0.06, ...}
+
+...across text, images, audio and video, in a single forward pass, on a laptop.
+
+The model you are copying is `akhilaaa3/Jev-Omni`: a 12-billion-parameter
+decision classifier built on Google's Gemma 4 12B. It is genuinely good. It is
+also expensive -- roughly 24 GB of weights in bf16, a CUDA GPU required, and a
+reported 83 ms per text decision on an H200, which is a datacenter accelerator
+that costs about $2-3/hour to rent.
+
+You want the same *interface* on something like 1/34th of the parameters, that
+runs on a Raspberry Pi.
+
+That is what this guide is for.
+
+--------------------------------------------------------------------------------
+HOW TO READ THIS
+--------------------------------------------------------------------------------
+
+Sections 1-4 are the "you know nothing" part. Skipping them will cost you.
+Sections 5-8 are the design. Section 9 is the build. Section 10 is the eval.
+Section 11 is shipping. Section 12 is what will go wrong.
+
+Every number in this guide is either (a) measured by us in this repository, or
+(b) cited to a public source you can go and check. Where a number came from
+somebody's model card rather than from a neutral benchmark, we say so, because
+in this field that distinction decides whether you are building something or
+just copying a table.
+
+================================================================================
+PART 0 -- THE THIRTY-SECOND VERSION
+================================================================================
+
+If you read nothing else, read this.
+
+WHAT JEV-OMNI IS
+    A language model with its text-generation ability replaced by a classifier
+    head. You give it a situation and a question with options; it gives back a
+    probability for every option. It never writes a sentence. That is the entire
+    trick, and it is worth ~99% of the cost saving.
+
+WHAT WE ARE CHANGING
+    Backbone:   Gemma 4 12B  ->  Liquid AI LFM2.5-350M   (12B -> 350M, ~34x)
+    Head:       Linear(3840, 256)  ->  Linear(1024, 256)
+    Training:   2.1 billion trainable LoRA params, 4 GPUs  ->  ~6 million, 1 GPU
+    Latency:    83 ms on H200  ->  tens of ms on a laptop CPU
+    Cost:       needs a datacenter GPU  ->  runs on a Raspberry Pi 5
+
+WHAT WE ARE NOT CHANGING
+    The idea. The head is still Linear(hidden, 256). The prompt still numbers the
+    options. The output is still a softmax over 256 slots. Everything the original
+    author got right, we keep.
+
+THE HEAD IS ALMOST FREE
+    LFM2.5-350M has 354,483,968 parameters. Our decision head adds 262,400.
+    That is 0.074% of the network. You could attach this head to a 10B model and
+    it would still be invisible in the parameter count. This is why "make it
+    smaller" is not a desperate optimisation -- it is mostly about which
+    pretrained backbone you start from.
+
+THE ONE THING THAT MATTERS MOST
+    A decision model is not a chatbot that happens to be small. It is a
+    classifier with a language model's knowledge. Everything else -- the prompt,
+    the options, the temperature -- is detail compared to the base checkpoint you
+    fine-tune and the calibration you fit afterwards.
+
+================================================================================
+PART 1 -- VOCABULARY, BECAUSE THE TERMS WILL OTHERWISE STOP YOU
+================================================================================
+
+1.1 TOKEN
+-------
+A token is a chunk of text. Not a word -- a *chunk*. The most common words are
+one token. Rare words get split into pieces. "Unbelievably" might be 3 tokens.
+
+Why it matters: models read and write tokens, not letters. Every cost formula
+you will meet is denominated in tokens. A 2,000-token document is about 1,500
+words of English prose.
+
+LFM2.5-350M has a vocabulary of 65,536 tokens. That means every piece of text
+becomes a list of integers in the range 0-65535.
+
+1.2 TOKENIZER
+------------
+The component that turns text into tokens and back. It is a fixed, learned
+lookup table plus some rules about splitting. It is NEVER trained. It is part of
+the model checkpoint.
+
+    tokenizer.encode("hello world")  ->  [15339, 1917]     (2 tokens)
+    tokenizer.decode([15339, 1917]) ->  "hello world"
+
+Pin your tokenizer with your model. If you upgrade the tokenizer, every number
+you have measured is now wrong.
+
+1.3 EMBEDDING / HIDDEN STATE / HIDDEN SIZE
+-----------------------------------------
+Neural networks turn tokens into vectors of numbers. A vector of 1,024 numbers
+is a "hidden state" of width 1,024.
+
+`hidden_size` is the width of that vector at every layer.
+
+    LFM2.5-350M    hidden_size = 1024
+    LFM2.5-2.6B    hidden_size = 2048
+    Gemma 4 12B    hidden_size = 3840
+
+This number is the single most important one for our purposes, because the size
+of the decision head is exactly `hidden_size * 256 + 256`.
+
+1.4 LAYER
+---------
+One transformation of the vector. A model stacks many of them. LFM2.5-350M has
+16. Gemma 4 12B has 48.
+
+Not all layers compute the same thing. LFM2.5-350M's 16 layers are:
+
+    conv, conv, full_attention, conv, conv, full_attention, conv, conv,
+    full_attention, conv, full_attention, conv, full_attention, conv,
+    full_attention, conv
+             ^^^^^^^^^^^^^  6 attention layers
+    ^^^^^^^^^^^^^^^^^  10 short-convolution layers
+
+That is the "hybrid" architecture. The conv layers are cheap local pattern
+detectors. The attention layers let distant parts of the input talk to each
+other. Liquid AI found this mix by running an architecture search against real
+edge hardware latency, rather than by guessing.
+
+1.5 FORWARD PASS
+---------------
+One run of the input through all the layers. This is what "inference" means.
+
+A language model runs a forward pass once per generated token -- a 100-token
+answer is 100 forward passes. A decision model runs the forward pass **once**,
+and that one pass produces the whole answer. This is where the speed comes from.
+
+1.6 LOGIT
+---------
+A raw, unnormalised score. Higher means "more likely".
+
+    logits = [2.1, -0.3, 0.7]        # not probabilities, do not sum to 1
+
+1.7 SOFTMAX
+-----------
+Turns logits into probabilities that sum to 1.
+
+    p_i = exp(z_i) / sum_j exp(z_j)
+
+Given logits [2.1, -0.3, 0.7] you get roughly [0.76, 0.07, 0.19].
+
+1.8 LOGIT / LOG-LIKELIHOOD
+-------------------------
+The log of a probability, before it is turned back into a probability. A
+language model's native output is logits over its whole vocabulary -- 65,536
+numbers for LFM2.5-350M. When someone says "the model scored option A", they
+usually mean "the log-likelihood of the tokens of option A was highest".
+
+9.8 LOGPROB
+-----------
+The log-probability the model assigned to a token it actually produced. This is
+what you get from an LLM API. It is a *generated* number: the model chose to
+write those digits. It is not a statement about how confident the model was.
+
+1.10 THE CENTRAL TRAP
+--------------------
+This is the single most important idea in the whole guide, and it is the reason
+decision models exist at all.
+
+    An LLM can WRITE the text "91%".
+    That does not mean there is a 91% chance it is right.
+
+The model's log-probability of emitting the characters "9", "1", "%" says how
+surprising that *string* was. It is a statement about text, not about truth. A
+model that is systematically overconfident will cheerfully write "95% confident"
+and be wrong half the time, and the probability it assigns to its own digits will
+agree with that claim.
+
+A decision model fixes this by never generating the confidence at all. It reads
+the number out of an internal representation and softmaxes it. You cannot
+generate a probability you did not compute, and there is no "as an AI language
+model" refusal path, because there is no generation.
+
+1.11 CALIBRATION
+----------------
+A model is *calibrated* when, when it says 80% confident, it is right about 80%
+of the time.
+
+Two models can both be 85% accurate. Model A is confident when right and unsure
+when wrong. Model B is 95% confident every single time. Same accuracy, wildly
+different usefulness -- only A can be used to route work, escalate cases, or set
+a threshold.
+
+Calibration is not accuracy. You need both, and you must measure them separately.
+
+1.12 ECE (EXPECTED CALIBRATION ERROR)
+------------------------------------
+The standard summary number. Split predictions into buckets by confidence; in
+each bucket compare confidence to actual accuracy; average the gaps, weighted by
+bucket size.
+
+    ECE = sum over buckets of (share of predictions in bucket) * |confidence - accuracy|
+
+Lower is better. Zero is perfect.
+
+CAVEAT, and it is a real one: ECE depends on how many buckets you use and where
+you put the edges. DecisionBench reports ECE over 10 equal-width bins in its
+table and draws its chart with 5. Those two numbers are NOT comparable. Always
+check the binning before comparing two ECE figures.
+
+1.13 BRIER SCORE
+----------------
+Mean squared error between your predicted distribution and the true one-hot
+answer, normalised by the number of options. Lower is better.
+
+Some people argue Brier is better than ECE for this application, and the
+`typed-decisions` benchmark makes a strong case: a model that always predicts the
+base rate is *perfectly calibrated by construction* (it is never surprised) yet
+completely useless. Reporting ECE alone lets that model look good. Report both.
+
+1.14 KL DIVERGENCE
+-----------------
+How far your distribution is from a reference distribution. `typed-decisions`
+reports it as the primary distribution-quality metric, and it is the metric that
+moved most when they switched a classifier to soft targets: KL fell by a third.
+
+1.15 LoRA (LOW-RANK ADAPTATION)
+-------------------------------
+Instead of retraining all 354M parameters, you add a small trainable "sidecar" of
+maybe 6M parameters and freeze the rest.
+
+The intuition: the update to a big weight matrix usually has low rank -- you can
+express it as a product of two small matrices. So you train only those.
+
+    W' = W + (alpha/r) * B * A
+
+where W is frozen (354M params), A is r x hidden and B is hidden x r are trained.
+
+r=16 on a 1024-wide model gives ~6M trainable parameters -- 1.7% of the model.
+
+Why this matters here: you can train the whole thing on one consumer GPU in
+minutes, and you can throw away the adapter and keep the original model.
+
+1.16 QLoRA
+----------
+LoRA where the frozen base is also quantised to 4 bits during training. Uses
+roughly the same memory as training the adapter alone. Matters when your GPU is
+small. Not needed for a 350M model on a 24 GB card, but useful on a 12 GB one.
+
+1.17 bf16 / fp32 / int8 / int4
+-----------------------------
+How many bits per number.
+
+    fp32   32 bits   full precision, baseline
+    bf16   16 bits   what these models ship in. ~3 significant decimal digits.
+                     Range like fp32, so no overflow. The default.
+    int8    8 bits   half the memory, tiny quality loss
+    int4    4 bits   quarter the memory, small quality loss
+
+bf16 has a subtlety that will bite you: it can represent 1.0 and 1.0078 but
+nothing between. When you compute probabilities in bf16 you get ~3 decimal
+digits. That is why our head is fp32 even when the backbone is bf16.
+
+1.18 TEMPERATURE
+----------------
+A single number you divide logits by before the softmax.
+
+    p = softmax(z / T)
+
+T < 1 sharpens (more confident). T > 1 softens (less confident).
+
+Crucially, temperature CANNOT change which option wins -- softmax is monotonic,
+so the argmax is invariant. Temperature only reshapes the distribution around
+the winner. That makes it a safe knob to fit after training without changing any
+answers.
+
+1.19 CONVOLUTION vs ATTENTION
+-----------------------------
+Convolution looks at a fixed small window of neighbouring positions. Cheap,
+local, fixed receptive field.
+
+Attention lets every position look at every other position, weighted by learned
+relevance. Expensive, global.
+
+LFM2.5 uses mostly convolution with some attention. That is why it is fast on
+CPUs. Gemma 4 12B uses a 5:1 mix of sliding-window and full attention.
+
+1.20 KV CACHE
+-------------
+When a transformer processes a prompt, each layer stores the "key" and "value"
+vectors it computed, so it does not recompute them. This is the cache.
+
+LFM2.5 also has a *convolution* cache: the last 3 positions' worth of convolution
+state (`conv_L_cache: 3`). If you branch a batch -- process several candidate
+answers in parallel -- you must copy BOTH caches. Copying only the attention KV
+and forgetting the conv state produces a model that is subtly, silently wrong.
+The `rlcd` project documented exactly this bug and its fix.
+
+1.21 JSON SCHEMA
+----------------
+A machine-readable description of a data shape. We use it to describe the
+options a question may be answered with.
+
+    {
+      "type": "object",
+      "properties": {
+        "team": {
+          "type": "string",
+          "description": "Which team should handle this?",
+          "enum": ["billing", "shipping", "technical"]
+        },
+        "urgent": {
+          "type": "boolean",
+          "description": "True only if immediate action is needed"
+        }
+      },
+      "required": ["team", "urgent"],
+      "additionalProperties": false
+    }
+
+1.22 TYPED DECISIONS: noul, choice, score
+------------------------------------------
+The three question types this whole ecosystem converged on. They trace back to
+TypeSafe AI's "System One" primitives.
+
+    noul    -- a yes/no statement. Answer: P(true), one number.
+    choice  -- one of N named options. Answer: a distribution over options.
+    score   -- an ordered rubric ("calm" < "frustrated" < "angry").
+               Answer: a distribution over levels PLUS the expected level, which
+               can fall between two levels. Expected 1.4 means "between
+               Frustrated and Very angry".
+
+Treating these three types explicitly, rather than as free text, is most of what
+makes these systems usable: your code gets a guaranteed type.
+
+================================================================================
+PART 2 -- WHAT JEV-OMNI ACTUALLY IS (WE READ THE CODE)
+================================================================================
+
+The model card tells you a lot. It does not tell you the head's shape or the
+learning rate. We read the published files.
+
+2.1 THE FILE LIST
+-----------------
+`akhilaaa3/Jev-Omni` ships, among others:
+
+    config.json           the base model architecture
+    decision_config.json  the decision head + the training recipe   <-- the gold
+    head.pt               the trained head weights
+    jev_omni.py           the entire runtime, ~150 lines
+    verification.json     reference outputs with known-good probabilities
+    processor_config.json image/audio/video preprocessing
+
+2.2 THE HEAD -- VERBATIM
+------------------------
+From `jev_omni.py`, unedited:
+
+    class _Head256(torch.nn.Module):
+        """Decision head: normalise the last hidden state, one logit per option slot."""
+        def __init__(self, hidden):
+            super().__init__()
+            self.register_buffer("mu", torch.zeros(1, hidden))
+            self.register_buffer("sd", torch.ones(1, hidden))
+            self.linear = torch.nn.Linear(hidden, 256, dtype=torch.float32)
+
+        def forward(self, features, counts):
+            z = self.linear((features.float() - self.mu) / self.sd)
+            return z.masked_fill(torch.arange(256, device=z.device)[None] >= counts[:, None], -1e30)
+
+That is the whole model-specific part. Four things are happening:
+
+(a) TAKE THE LAST HIDDEN STATE.
+    A forward hook on the text backbone captures
+    `out.last_hidden_state[:, -1].float()`. The final position, because that is
+    where the model would have predicted the answer.
+
+(b) STANDARDISE IT. `(features - mu) / sd`, with mu and sd stored as *buffers*,
+    not parameters -- fixed statistics, never trained. This keeps the head's
+    input well-scaled regardless of what the backbone is doing.
+
+(c) PROJECT TO 256 SLOTS. `Linear(3840, 256)`. These are NOT vocabulary tokens.
+    They are 256 *positional option slots*: slot 0 means "option 1", slot 1 means
+    "option 2", and so on.
+
+(d) MASK AND SOFTMAX. Slots at or beyond the real option count get -1e30, i.e.
+    probability 0. The real slots get softmaxed.
+
+Parameter count: 3840*256 + 256 = 983,456. Against an 11,959,730,224-parameter
+model, that is 0.008%.
+
+2.3 WHY SLOT LOGITS, NOT TOKEN LOGITS
+-------------------------------------
+This is the design decision that makes one checkpoint generalise.
+
+If the head scored the *text* of each option, then "billing" and "shipping" would
+need to be known vocabulary, and an unseen label would be unscoreable.
+
+Because it scores *positions in a list*, the same 256 weights handle any
+question with any 2-256 options. A model fine-tuned on support tickets can answer
+a question about satellite imagery it has never seen, because the head does not
+care what the words mean.
+
+The whole method rests on the prompt putting the options in a known order:
+
+    {state}
+
+    ---
+
+    QUESTION: {question}
+
+    OPTIONS:
+    1. billing
+    2. shipping
+    3. technical support
+
+    Reply with only the number of the correct option (1-3).
+    Output a single number and nothing else.
+
+The prompt's numbering and the head's slot indexing are two halves of one
+contract. Change the renderer and you must retrain.
+
+2.4 THE TRAINING RECIPE -- VERBATIM
+-----------------------------------
+From `decision_config.json`:
+
+    size              24000          (examples)
+    rank              512            (LoRA rank)
+    alpha             512
+    lr                1e-05
+    head_lr           1e-05
+    microbatch        8
+    effective_batch   32
+    epochs            1
+    warmup_ratio      0.1
+    warmup_steps      75
+    steps             750
+    seed              3407
+    schedule          linear warmup then linear decay to 10% of peak
+    trainable_params  2,099,183,872
+    world_size        4
+    adapters_merged   ["trained v1 rank128", "lora-v1merged-..."]
+
+Note what this says. 24,000 examples. One epoch. Rank-512 LoRA. lr 1e-5. A linear
+decay to 10% of peak. Four GPUs.
+
+2.1 billion trainable parameters for a 12B model is 17.5% of the network -- an
+unusually high LoRA rank, applied after merging an earlier rank-128 adapter.
+Whatever produced that adapter did so with serious hardware.
+
+Our version: 6,004,744 trainable parameters (LoRA 5,996,544 + head 8,200) for a
+350M model. That is 1.7%. We measured this; it is printed by the trainer.
+
+2.5 THE NUMBERS JEV-OMNI REPORTS
+---------------------------------
+    DecisionBench Medium   87.57% state-macro   86.01% micro
+    JevBench               86.15% group         87.45% micro
+    MMAU (1,000 questions)     --                63.10% micro
+    MVBench (2,786 questions)  --                53.10% micro
+    ECE, DecisionBench Medium                   0.0400 (10 bins)
+    Latency, warm H200: 83 ms (~2k tokens text), 26 ms (image),
+                        31 ms (13 s audio), 504 ms (16-frame video)
+
+Read the MMAU number in context. On the full MMAU benchmark, Gemini Pro v1.5
+scores 52.97% and Qwen2-Audio -- the purpose-built audio model -- scores 52.50%.
+MMAU is 10,000 expert-annotated questions across 27 tasks, a third of them music
+and a third non-speech sound. It is very hard, and 63% on the 1,000-question
+mini split is a respectable number, not a joke.
+
+Read the MVBench number in context too: 53.10% is roughly chance-plus for
+20-way multiple choice across temporal-reasoning tasks that the benchmark's own
+authors say "cannot be effectively solved with a single frame".
+
+2.6 WHAT IT IS NOT
+------------------
+Jev-Omni is *not* affiliated with TypeSafe AI. Its own card says so, and says
+nothing was trained on Jev output.
+
+TypeSafe AI's "Jev" is a closed, hosted product at $0.042 per million input
+tokens. It has no published weights, no published training method, and no paper.
+An independent reverse-engineering effort (`archerhume.com`, 17 Sep 2026, based
+on 10,000 API calls) concluded the design is "a causal transformer repurposed for
+decisions: shared-state encoding, isolated question branches, and direct
+probability readouts". The parts it could confirm -- parallel probabilities,
+state reuse across questions, question isolation, option interaction before
+choosing -- are exactly the parts Jev-Omni implements. The backbone question it
+could not answer.
+
+So: Jev-Omni is an independent reimplementation of a *design pattern*, and the
+pattern is what you can legitimately copy.
+
+================================================================================
+PART 3 -- THE LIQUID AI LFM2.5 FAMILY
+================================================================================
+
+3.1 WHAT LFM2 IS
+---------------
+From the LFM2 technical report (arXiv 2511.23404, 28 Nov 2025):
+
+    "Using hardware-in-the-loop architecture search under edge latency and memory
+     constraints, we obtain a compact hybrid backbone that combines gated short
+     convolutions with a small number of grouped query attention blocks, delivering
+     up to 2x faster prefill and decode on CPUs compared to similarly sized
+     models."
+
+Three things in that sentence matter:
+
+- *Hardware-in-the-loop search*. The architecture was chosen by measuring latency
+  and memory on real devices, not by a proxy loss.
+- *Gated short convolutions*. Most layers are cheap local filters.
+- *Grouped-query attention*. A small number of expensive global layers.
+
+3.2 THE CHECKPOINTS
+-------------------
+    LFM2.5-350M      350M    text-only    hidden 1024    our default
+    LFM2.5-2.6B      2.69B   text-only    hidden 2048    if you can afford it
+    LFM2.5-VL-450M   450M    + image      hidden 1024    our multimodal base
+    LFM2.5-VL-1.6B   1.6B    + image      hidden 2048
+    LFM2.5-VL-3B     3.1B    + image      hidden 2048
+    LFM2.5-Audio-1.5B 1.5B    + audio      1.2B text backbone
+    LFM2.5-Encoder-350M 350M  bidirectional 8k ctx   text-only, classifier-native
+
+Note: the plain text LFM2.5 checkpoints have NO media tower. If you want image,
+audio or video you must start from a VL or Audio checkpoint. This is the most
+common early mistake.
+
+3.3 LFM2.5-350M SPEC -- MEASURED, NOT QUOTED
+--------------------------------------------
+We loaded these weights. These are the real values from `config.json`:
+
+    architectures            Lfm2ForCausalLM
+    hidden_size              1024
+    intermediate_size        6656
+    num_hidden_layers        16
+    num_attention_heads      16
+    num_key_value_heads      8        (grouped-query attention)
+    conv_dim                 1024
+    conv_L_cache             3
+    conv_bias                false
+    vocab_size               65536
+    max_position_embeddings  128000
+    rope_theta               1000000.0
+    norm_eps                 1e-05
+    block_use_swiglu         true
+    dtype                    bfloat16
+
+Actual parameter count from safetensors: 354,483,968.
+
+Training budget: 28 trillion tokens. Knowledge cutoff: mid-2024. Languages:
+English, Arabic, Chinese, French, German, Japanese, Korean, Portuguese, Spanish.
+
+3.4 ITS BENCHMARKS
+-----------------
+    GPQA Diamond        30.64     (Qwen3.5-0.8B-Instruct: 27.41)
+    MMLU-Pro            20.01
+    IFEval              76.96     (LFM2-350M: 64.96)
+    IFBench             40.69     (LFM2-350M: 18.20)
+    Multi-IF            44.92
+    CaseReportBench     32.45     (LFM2-350M: 11.67)  <- structured extraction
+    BFCLv3              44.11     (LFM2-350M: 22.95)  <- function calling
+    BFCLv4              21.86
+    tau2-Bench Telecom  18.86
+    tau2-Bench Retail   17.84
+
+Liquid AI explicitly recommends LFM2.5-350M for "data extraction, structured
+outputs, and tool use" and explicitly says it is *not* recommended for
+"knowledge-intensive tasks and programming".
+
+That is almost a description of a decision model. We are picking the right tool.
+
+3.5 MEASURED SPEED -- LIQUID'S OWN NUMBERS
+------------------------------------------
+From the LFM2.5-350M release post (31 Mar 2026), prefill/decode at 1K prefill
+and 100 decode tokens:
+
+    AMD Ryzen AI Max 395+   CPU   llama.cpp Q4     2.9K / 313 tok/s   434 MB
+    Snapdragon 8 Elite      NPU   RunAnywhere Q4   2.8K /  15 tok/s   169 MB
+    Snapdragon 8 Elite      GPU   RunAnywhere Q4   5.3K /  62 tok/s    81 MB
+    Apple A18 Pro          GPU   Mirai bf16        1953 / 73 tok/s    945 MB
+    Apple M1 Max           GPU   Mirai bf16       10.4K / 328 tok/s   940 MB
+    Apple M5 Max           GPU   Mirai bf16       44.8K / 564 tok/s     1 GB
+    iPhone 13 mini         CPU   Cactus int8        496 / 88 tok/s     56 MB
+    Google Pixel 6a        CPU   Cactus int8        208 / 42 tok/s    328 MB
+    Raspberry Pi 5         CPU   Cactus int8        200 / 30 tok/s    300 MB
+
+A Raspberry Pi 5 at 30 tok/s decode and 300 MB is your floor. A decision model
+generates zero tokens, so you care about the *prefill* column: 200 tok/s on a Pi
+means a 500-token state plus a 100-token question reads in about 3 seconds, and
+a short state reads in well under a second.
+
+3.6 THE LICENCE -- READ THIS CAREFULLY
+-------------------------------------
+Liquid's models are under the **LFM Open License v1.0**, not Apache-2.0.
+
+It is based on Apache 2.0 with ONE substantive change, in Section 5:
+
+    "Threshold" shall mean annual revenue of 10 million United States dollars
+    ($10,000,000) or more.
+
+    5(a) The rights granted under this License for Commercial Use are conditioned
+         upon You or Your Legal Entity not exceeding the Threshold.
+    5(b) Any Commercial Use of the Work or a Derivative Work by a Legal Entity
+         that exceeds the Threshold is not licensed under this Agreement.
+    5(c) The Threshold shall not apply to a Qualified Non-Profit Organization's
+         use of the Work or a Derivative Work for Non-Commercial or Research
+         Purposes.
+
+What this means for you, concretely:
+
+  - Your CODE can be MIT. This repository is.
+  - Your WEIGHTS cannot be MIT. A fine-tuned LFM2.5 derivative stays under the
+    LFM Open License v1.0, and you must ship that licence with it.
+  - There is NO copyleft. You can keep your fine-tuned weights proprietary.
+  - You must include a copy of the licence, retain attribution notices, and mark
+    modified files.
+  - You can use it commercially if your annual revenue is under $10M.
+  - A 501(c)(3) or equivalent non-profit has no threshold for research use.
+  - The licence is not OSI-approved, so some corporate policies will block it.
+  - It terminates automatically on breach.
+
+So a "MIT Jeb-Omni-Nano" is only ever true of the *code*. If you publish
+weights, say LFM Open License v1.0, and put a NOTICE in the model card. Our
+`LICENSE` file says exactly this.
+
+================================================================================
+PART 4 -- THE EXISTING PRIOR ART, AND WHAT IT TAUGHT US
+================================================================================
+
+Before designing anything, we read what other people built. There are dozens.
+The most instructive:
+
+4.1 notnotsamuel/LFM2.5-350M-RLCD   <- the closest thing to our goal
+--------------------------------------------------------------------------
+This is almost certainly what you meant by "RCLDs".
+
+Inference-only. The base weights are byte-identical to LiquidAI/LFM2.5-350M at
+revision 9e6c6ccf47cd318696e137d381a7ded8fe4df09f. No training at all.
+
+Its method: prefill the context once, deep-copy the hybrid cache (attention KV
+*and* the short-convolution state), branch the cache, score every JSON-Schema
+candidate value in one batch, sum the log-softmax over each candidate's full
+token sequence, take the argmax per field, assemble the JSON in Python.
+
+Its own measured results, 28 boolean fields, FP16:
+
+    M2 Max     393.20 ms constrained vs 3326.95 ms AR   =  8.46x
+    L40S        54.12 ms vs 3404.48 ms                   = 62.91x
+    H100        43.76 ms vs 2586.97 ms                   = 59.12x
+    field accuracy 60.7% / 64.3% / 60.7% vs 53.6% autoregressive
+
+And the honest caveats, which we quote because they matter more than the speedup:
+
+  - "Valid JSON does not mean correct answers: neither method produced a fully
+     correct 28-field object."
+  - On its 12-case diagnostic suite the constrained method was *faster* but
+     *less accurate*: 77.8% vs 80.6% field accuracy.
+  - With 255 candidate options on a Mac, constrained inference was 3.23x SLOWER.
+  - "They are not calibrated confidence. No calibration evaluation was performed
+     and no normalized probability API is exposed."
+  - It explicitly does NOT reproduce TypeSafe's training method.
+
+THE KEY LESSON: constraining the decoder gives you *structure* for free, but it
+gives you neither accuracy nor calibration. And it does nothing to shrink the
+model. We want the head approach AND a smaller backbone, not this.
+
+4.2 akhilaaa3/Jev-Omni
+----------------------
+The head design we are copying. 12B. 87.57% on DecisionBench Medium, ECE 0.0400.
+
+4.3 jaredpalmer/kev   (0.8B / 4B / 9B / 27B, Apache-2.0)
+---------------------------------------------------------
+The most carefully documented open family. Key design: a **pointer head** that
+scores each option's own `</opt>` hidden state against the question's `<decide>`
+hidden state, rather than scoring fixed slots. Options are labelled with single
+tokens A, B, C...
+
+Their recipe: LoRA r=16 alpha=32, two epochs, lr 1e-4, ~20 minutes on one H100
+for the 0.8B. They ship a fitted temperature per checkpoint.
+
+Their honesty about scale, which we quote directly:
+
+    "It is still a sub-1B model. On the development splits it trails Jev
+     everywhere it can be compared: documents 0.842 vs 0.868, hard-v1 0.594 vs
+     0.777, devtools-v1 0.602 vs 0.713, out of domain 0.648 vs 0.857."
+
+and:
+
+    "Out of domain it is a sub-1B model. Knowledge (MMLU 0.41) and paraphrase
+     (PAWS 0.59) are near the untrained base."
+
+and:
+
+    "Out of domain it is still a sub-1B model: use Kev-4B for accuracy; use this
+     one where memory rules the 4B out, and measure on your own data."
+
+and the single most useful sentence in this whole guide:
+
+    "Probabilities are usable in-domain; treat them as advisory elsewhere."
+
+Their 0.8B card also documents fifteen registered training rounds before the
+shipped one, and that stacking a second delta on top of a first one *eroded* the
+first ("the second delta eroded the first: seed 1's documents lower bound was
+-2.03 pp against a -2 pp floor"). Stacking LoRA deltas is not free.
+
+4.4 frontier-infra/jebadiah (4B / 9B, Apache-2.0)
+--------------------------------------------------
+Their approach differs: option labels are single tokens, and the answer is the
+distribution over those label tokens at the last prompt position, read in fp32
+from the last hidden state, then temperature-scaled per type.
+
+They ship three temperatures: choice 1.12, noul 1.33, score 1.20.
+
+The finding we care most about is about *how* to fit that temperature:
+
+    "The `hard` fit minimises NLL against the argmax label and sharpens
+     (T 0.68 / 0.96 / 0.83). The `train` fit minimises NLL against the training
+     target, the soft or ordinal distribution the model was taught, and softens
+     (T 1.12 / 1.33 / 1.20). v2 applies `train` ... because the ordinal target is
+     what makes rubric probabilities honest, and the `hard` fit is exactly the
+     sharpening that made v0's HelpSteer2 calibration worse."
+
+Fitting temperature against the soft target you trained on is not the same as
+fitting it against the argmax. We follow the `train` fit, and our
+`fit_temperature` documents the choice.
+
+4.5 getainode/jebadiah's own negative results
+---------------------------------------------
+Their experiment log is the most valuable single document in this field. Things
+that did NOT work:
+
+  - A 14,714-question synthetic pool authored by their own teachers made the 9B
+    *worse*.
+  - A fifth of synthetic choice questions helped a little.
+  - Re-targeting synthetic data with a better teacher did not move the headline.
+  - Public human yes/no data did not lift their human yes/no eval sets.
+  - Two epochs were worse than one.
+
+What DID work:
+
+  - Adding human-rated score data and an ordinal target: HelpSteer2 Decision
+    Score went from -21.4 to +11.9 and calibration error from 0.39 to 0.045.
+    "The model became honest about not knowing helpfulness rather than better at
+    judging it."
+  - Switching the base checkpoint from Base to the chat checkpoint, with
+    thinking off: worth 2.15 headline points on the 4B, more than any data change
+    they made.
+
+Read that last one twice. On the 4B, the single biggest win was the starting
+checkpoint, not the data. That is why our default is the instruction-tuned
+`LiquidAI/LFM2.5-350M`, not `-350M-Base`.
+
+4.6 logan-markewich/jeff (400M, MIT)
+------------------------------------
+A different architecture entirely: GLiFormer, a bidirectional encoder, with a
+temperature of 3.2 (i.e. substantially overconfident out of the box, corrected by
+a large softening factor).
+
+Its JevBench v1.2.2 score of 66.9 ranked #9, but on Intelligence it was #14 of 18.
+Its own card: "Cheaper to self-host, but less accurate than jev on reasoning-heavy
+tasks."
+
+That is the honest shape of the small-model tradeoff, stated plainly by someone
+who built one.
+
+4.7 What converged and what did not
+-----------------------------------
+CONVERGED (independent implementations agree):
+  - A small trained head, not constrained decoding.
+  - A pretrained causal backbone, fine-tuned, not trained from scratch.
+  - LoRA rather than full fine-tuning.
+  - A fitted temperature, shipped with the model.
+  - Per-question-type temperatures rather than one global value.
+  - Reporting Brier/KL alongside ECE.
+  - Explicitly labelling probability as a routing signal, not a truth claim.
+
+DIVERGED (no consensus):
+  - Slot logits (Jev-Omni) vs pointer scoring (Kev) vs label-token logits
+    (Jebadiah). All three work. Slot logits are simplest and cheapest; we use them.
+  - Causal decoder vs bidirectional encoder (jeff, LFM2.5-Encoder). Encoders are
+    faster; decoders carry more pretrained knowledge. We use a decoder.
+  - Whether questions should be isolated. Kev runs one row per question on hybrid
+    DeltaNet bases because those layers ignore attention masks. We run one
+    forward pass per question too, and say so.
+  - Whether to use soft targets. Jebadiah says yes for rubrics; a benchmark says
+    it cut KL by a third; Jebadiah also says a big synthetic soft-label pool made
+    things worse. Both can be true: soft targets help, bad soft targets hurt.
