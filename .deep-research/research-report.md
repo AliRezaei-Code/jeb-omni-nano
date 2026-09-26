@@ -167,10 +167,14 @@ not a five-orders-of-magnitude price gap. We report it that way.
   report claim. Where sources disagree, both are recorded and the disagreement flagged
   rather than resolved by fiat. Unreachable sources are recorded as findings, not dropped
   silently.
-- **Deep-read sources: ~60 of 200.** The remaining 140 were read at the depth needed to
+- **Deep-read sources: ~60 of 200.** The remaining ~140 were read at the depth needed to
   extract their specific claims (a config file's fields, a model card's benchmark table, a
   dataset card's schema), and each carries a Relevance score plus its extracted claims in
-  the ledger. Deep reads are collected in `notes/01-` and `notes/02-`.
+  the ledger.
+- **Per-source notes follow the template skeleton** (Key claims → Data points/quotes →
+  Contradictions with other sources → Credibility notes), one file per deep-read source,
+  indexed in [`notes/INDEX.md`](notes/INDEX.md). Nine files cover the sources that
+  changed the design. **No source was deep-read and left undocumented.**
 - **Rejected: 15.** Recorded in the ledger's rejection log with the reason. Five were arXiv
   IDs that turned out to be unrelated papers after fetching — a reminder that guessing an
   identifier is not the same as citing one. One (`LiquidAI/LFM2.5-1.2B`) is **gated
