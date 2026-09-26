@@ -593,7 +593,7 @@ Data extraction and tool use improved 2-3x. That is the profile of a decision mo
 
 #### Licensing — the full text, and why it matters
 
-The **LFM Open License v1.0** is based on Apache 2.0 with exactly one substantive change.
+The **LFM Open License v1.0** is based on Apache 2.0 with exactly one substantive change. `[single source: the licence text itself, read in full]`
 Section 5, verbatim:
 
 > (a) The rights granted under this License for Commercial Use are conditioned upon You or
@@ -768,6 +768,63 @@ can only automate 14.5% of decisions is not obviously more useful than one that 
 And the MLX 4-bit Jev-Omni card records a calibration *regression* from its own
 temperature fit: ECE improved on the fit split but **got worse held out** (0.06261 →
 0.06774). Always report calibration on a split you did not fit on.
+
+#### What the checked-in calibrators actually do
+
+Three calibration artefacts are published as files rather than prose, and reading them
+changed our implementation. This is the most actionable material in SQ4.
+
+**Temperature depends on the option count, not only the question type.**
+`heman10x/rlcd-modernbert-151m` ships a `calibrator.json` with a temperature per
+cardinality `[single source]`:
+
+| k=2 | k=3 | k=4 | k=5 | k=6 | k=7 | k=9 | k=11 | k=17 | k=25 | global |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 5.0069 | 5.0069 | 4.0314 | 3.0560 | 2.3898 | 2.3898 | 1.6668 | 3.3919 | 1.7200 | 1.5144 | 2.8039 |
+
+**A 3.3× spread driven by option count alone.** A single global T is 3.3× too wrong at
+the ends of the range. (k=11 is non-monotone — per-k fits are themselves noisy at these
+sample sizes, which is the motivation for the shrinkage below.)
+
+**Small groups must shrink toward the global value, in log space.**
+`Jev-Style-0.8B-Decision-v3` stores, per group, the raw fit `T_raw`, the shrunk `T`, the
+row count `n` and a `weight`. Two identities were checked arithmetically against the
+file `[single source, independently recomputed]`:
+
+    weight = n / (n + 100)          -- exact for all 20 groups
+    T = exp( w·ln T_raw + (1-w)·ln T_global )   -- geometric, not arithmetic
+
+Two groups reproduce to ~5 decimal places under the geometric blend
+(`general|choice|3-5`: 0.856385 vs stored 0.856380; `intent|choice|11-20`: 0.853653 vs
+0.853659). On the n=15 group the two blend kinds diverge decisively — geometric gives
+1.01018 against a stored 1.01016, arithmetic gives 1.09567. That group wanted T=5.0 and
+was rescued only by a hard clamp, which is precisely the overfit shrinkage exists to
+catch.
+
+**T can be below 1.0.** That same calibrator's global is **0.880** — the model was
+*under*confident, so calibration *sharpened* it. Kev-0.8B needs 2.35. Do not assume
+`T >= 1`, and do not search a grid that only goes upward.
+
+**Refit per quantisation format.** One project ships two calibration files for the same
+model: BF16 `T = 1.0409` and Q4_K_M `T = 1.0123`, with argmax agreement **0.996** and
+**0.914** respectively, and *relaxed* acceptance gates for the lossy format. A
+temperature fitted on one format is wrong on another.
+
+**And the cheapest possible deployment is a bug fix.** From `Verdict-open-jev`: the engine
+"previously failed to load `calibrator.json` during standalone instantiation, **running
+at uncalibrated temperature 1.0**", and a scope check limited calibration to 5-candidate
+queries, "leaving other cardinalities unscaled". Fixing both moved hard-tier ECE
+**0.298 → 0.118 (−60.4%)** — the largest single calibration win in that project's
+history, from *loading* the calibrator correctly rather than fitting it better.
+
+#### What the objective is optimised against matters
+
+We fit T by minimising NLL against the training target. That is right for a routing
+threshold and **wrong for a prediction-set consumer**, and the distinction is documented:
+Conformal Temperature Scaling reports that calibration parameters "when optimized with
+**cross-entropy loss**, might counteract the goal of generating efficient prediction
+sets" `[dated: 2024]`. If your downstream use is a set rather than a threshold, fitting
+by NLL optimises the wrong thing. Say which one you built for.
 
 #### SQ4 verdict
 
@@ -1133,6 +1190,24 @@ on its in-distribution test. It also reports an eval-only source that got **wors
 (When2Call 0.233 → 0.133, below the one-in-four guessing rate) and says plainly: *"Do not
 use this checkpoint for tool-call routing."*
 
+---
+
+#### SQ7 verdict
+
+Code MIT, weights LFM-licensed, and five specific reporting traps this ecosystem has
+already documented instances of. Every one of them has a documented victim, including two
+of the authors of those victims. The traps are not pedantry: JevBench had to withdraw a
+chart over one of them, and the per-decision vs per-token confusion is the single easiest
+way to make a cheap model look expensive or an expensive model look free.
+
+---
+
+### SQ8 — Failure modes: what actually goes wrong, and how badly
+
+**Claim class: reported fact. Every item below is a measured failure in a published
+system, not a hypothetical.** This section is separated from SQ7 because these are
+different in kind: SQ7 is about how to *report*, this is about what is *wrong*.
+
 #### And the failure nobody expected
 
 The option-name failure (arXiv 2609.26758) deserves its own treatment because it is the
@@ -1163,10 +1238,61 @@ neutral or random-ish option identifiers in the prompt with the human-readable n
 carried in the rubric.** It is a prompt change, not a retrain. It is also an argument for
 slot logits over pointer scoring, and a reason to keep option counts at or below 20.
 
-#### SQ7 verdict
+#### A model can read a negated rule as its opposite, confidently
 
-Code MIT, weights LFM-licensed, and five specific reporting traps that this ecosystem has
-already documented instances of. The option-name test is the one to run first.
+The second and more alarming failure, from the same read-out family
+([this-that-model 1.0 → 1.1 → 1.2 changelog](https://github.com/FLock-io/this-that-model)):
+
+> "1.1 read `bays without chilled handling are ineligible` as though it named the
+> **eligible** set — **not failing to apply the rule but applying its opposite, at 0.88
+> mean confidence.**"
+
+Across eleven phrasings of that one rule (chance 0.19) the model ranged **0.00–0.89, with
+four of eleven rows *below* chance**; 1.2 fixed the range to 0.98–1.00. Below chance is not
+guessing, it is systematically wrong in one direction. And this is the model that scores
+**0.941 accuracy / 0.042 Brier** on the 68-question cohort every Jev comparison uses.
+
+The mechanism is general: a slot-logit or label-token readout must compress "excluded by a
+condition" and "named by a condition" into a single scalar, and negation is exactly what
+that compression handles worst. Nothing in a cross-entropy loss on argmax labels rewards
+noticing it. **Test negation explicitly before shipping** — write each of your rules both
+ways and check the model inverts correctly.
+
+#### Three adversarial findings, all from September 2026
+
+**Context can flip a correct decision.** `JevOut` (arXiv 2609.30243) uses the model's own
+option probabilities to steer fluent context additions that keep the source, question,
+choices and gold answer intact, and redirects **312 of 508 initially-correct decisions
+(61.4%)**, with the wrong target getting ≥0.7 probability in 229 cases. Three other
+decision systems showed 64.9–73.2% targeted flip rates. Your `state` field is a blob of
+user text; treat it as adversarial input.
+
+**Returning probabilities builds you a gradient oracle.** `Decision Hijacking` (arXiv
+2609.28613) ran 510 reconstructed InjecAgent cases. Malicious content rarely selects the
+attacker's target outright, but **adaptive attacks using score feedback double the mean
+highest attacker-target probability**, raising fresh-validation success from 1.8% to 3.5%.
+An adversary who can submit inputs and read probabilities optimises against you far more
+cheaply than against a text generator, whose output is a noisier signal.
+
+**Cascades fail when the errors are correlated.** This is the most consequential result for
+deployment, and it cuts against the most common plan. `JEV vs. LLMs as Rubric Judges`
+(arXiv 2609.29769) found the small model's confidence does rank its own errors — *"which
+should make a cheap classifier the ideal first stage of a cascade"* — but then: *"**the
+LLM judges repeat nearly all of Jev's most confident errors**, so a cascade … gains at
+most 1.5 points over the best single judge with cross-fitted thresholds, and at most 2.0
+even with oracle thresholds."* A companion paper (arXiv 2609.26550) found the opposite on
+a different benchmark, retaining 99% of a SOTA judge's accuracy at lower cost. **The two
+are in direct tension and the difference is benchmark-dependent**, so measure your cascade
+end to end on your own data, and check whether your fallback actually disagrees with you
+on the cases you escalated.
+
+#### SQ8 verdict
+
+The option-name test and the negation test are both cheap, both take under a day, and
+both find failures that a schema check and an accuracy number both report as fine. Run
+them before you trust a threshold. The adversarial results mean a decision model fed
+untrusted text is an attack surface, and the cascade results mean the obvious
+"small model first, big model on doubt" architecture may buy you almost nothing.
 
 ---
 
@@ -1235,7 +1361,7 @@ marketing surface.
 ### Contradiction 3 — Gemma 4's licence surface
 
 `google/gemma-4-12b-it` is tagged `license: apache-2.0` on the Hub, with a `license_link`
-pointing to Google's Gemma 4 terms, and **ships no LICENSE file**. Jev-Omni ships
+pointing to Google's Gemma 4 terms, and **ships no LICENSE file**. `[single source: the Hub API record]` Jev-Omni ships
 `apache-2.0` and says "following Gemma 4." The SPDX tag and the linked terms are not
 obviously the same instrument. Anyone redistributing Gemma-4-derived weights should read
 the linked terms.
@@ -1639,7 +1765,7 @@ source are in the ledger; per-source deep notes for the load-bearing ones are in
 184. [OpenDecision](https://raw.githubusercontent.com/deepanwadhwa/OpenDecision/main/README.md) — deepanwadhwa, 2026-09. An open-source equivalent of Jev with Choice / Noul / Score plus a fourth primitive **`Relation`** reporting `supports` / `contradicts` / `unknown` /... (Tier A, repo, rel 3)
 185. [Reflex](https://raw.githubusercontent.com/kaustav1996/reflex/main/README.md) — kaustav1996, 2026-09. A concrete production deployment: "A calibrated System One model checks each tool call, turn and voice transcript in about 400 ms, and code decides... (Tier A, repo, rel 3)
 186. [jevlike-esp32](https://raw.githubusercontent.com/david-cermak/jevlike-esp32/main/README.md) — david-cermak, 2026-09. The same option-query scorer ported to **ESP32 embedded firmware** (ESP-IDF), training staying in Python (Tier C, repo, rel 2)
-187. [On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599) — Guo, Pleiss, Sun, Weinberger (Cornell), 2017-06-14. **The origin of the ECE binning debate this whole project inherits.** Finds modern NNs "poorly calibrated" and that depth, width, weight decay and... (Tier A, paper, rel 5)
+187. [On Calibration of Modern Neural Networks](https://arxiv.org/abs/1706.04599) — Guo, Pleiss, Sun, Weinberger (Cornell), 2017-06-14. **The origin of the ECE binning debate this whole project inherits.** Finds modern NNs "poorly calibrated" `[dated: 2017]` and that depth, width, weight decay and... (Tier A, paper, rel 5)
 188. [Conformal Risk Control](https://arxiv.org/abs/2208.02814) — Angelopoulos, Bates, Fisch, Lei, Schuster, 2022-08-04. Extends conformal prediction to control the expected value of **any monotone loss function**, generalising split conformal together with its coverage... (Tier A, paper, rel 4)
 189. [SelectiveNet: A Deep Neural Network with an Integrated Reject Option](https://arxiv.org/abs/1901.09192) — Geifman, El-Yaniv, 2019-01-26. "Existing rejection mechanisms are based mostly on a threshold over the prediction confidence of a **pre-trained** network (Tier A, paper, rel 4)
 190. [AUC-based Selective Classification](https://arxiv.org/abs/2210.10703) — Pugnana, Ruggieri, 2022-10-19. "In many application scenarios, such as **credit scoring**, performance is instead measured by ranking metrics, such as the Area Under the ROC Curve."... (Tier A, paper, rel 3)
