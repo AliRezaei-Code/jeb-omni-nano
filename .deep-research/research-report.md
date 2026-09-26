@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Total sources** | **164** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
+| **Total sources** | **178** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,070 lines |
 
@@ -544,6 +544,21 @@ vocab.
 **A decision model generates zero tokens, so the prefill column is the one that
 matters.** A 500-token state on a Pi 5 reads in about 3 seconds; a short state in well
 under a second.
+
+#### The vendor endorses the premise
+
+Liquid's own use-case-evaluation guide, quoted, because a vendor agreeing with the plan
+is worth more than a third-party opinion:
+
+> "A fair evaluation of a small model often includes a light fine-tune. Out of the box, a
+> 1.2B model will trail a larger generalist on broad tasks. After task-specific
+> fine-tuning, **it can match or beat that larger model on your task at lower cost and
+> latency.**"
+
+Their hardware guide names the same starting point we did — "Start with LFM2.5-350M …
+it is the first model many silicon partners profile" — and its eval checklist ends with
+"**Held-out examples frozen before any fine-tuning**". That is the rule that would have
+saved time on this project.
 
 #### The recommendation, which is the reason we chose this family
 
