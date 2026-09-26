@@ -47,6 +47,39 @@ calibration specifically, because discarding the non-argmax mass is precisely th
 information a calibration term needs. If `hard_ce` ties on ECE, the strictly-proper
 framing in Part 5.1 of the guide is overstated and should be rewritten.
 
+## Validity check run before the results: are the targets even soft?
+
+A loss ablation is worthless if the two arms compute the same function. `gold_tensor`
+builds `g[i, :len(p)] = tensor(p)`, so the whole question is whether the dataset's `p`
+is a one-hot label or a distribution. **Checked directly against the dataset:**
+
+    action__probabilities:   {"answer_directly": 0.743333, "close_no_action": 0.03,
+                              "escalate_to_human": 0.2, "execute_refund": 0.003333,
+                              "request_information": 0.023333}
+    needs_human__probabilities: {"false": 0.35, "true": 0.65}
+    urgency__probabilities:      {"0": 0.003333, "1": 0.28, "2": 0.316667, "3": 0.4}
+    churn_risk__probabilities:   {"0": 0.003333, "1": 0.006667, "2": 0.05, "3": 0.94}
+
+**The targets are genuinely soft**, so `soft_ce` and `hard_ce` are different functions
+and the ablation is not vacuous. Had these been one-hot, the two arms would be
+algebraically identical and the whole run would have measured nothing.
+
+This also sharpens the substantive argument, and it is the strongest one available for
+`soft_ce`:
+
+> **The dataset ships soft probability labels. Training with hard CE discards
+> information the data provides.**
+
+`churn_risk` is 0.94 on one option and 0.05 on another; `action` is 0.74 / 0.20 / 0.03.
+A hard-CE arm throws that structure away and optimises only the argmax. The strictly-proper
+scoring-rule argument in guide Part 5.1 is therefore not just theoretical here -- on
+*this* dataset, soft targets are what is actually available, and the question is whether
+using them helps, not whether they are permissible.
+
+It also makes kyr0's claim narrower than it first read. "Use CE" against a dataset that
+already provides soft labels is close to a restatement of the obvious. The interesting
+version of his claim is the `ce_brier` arm.
+
 ## Controls held fixed
 
 Identical across all three arms, so nothing but the objective varies:
