@@ -104,6 +104,44 @@ def test_fit_temperature_recovers_known_value() -> None:
     check("over-confident logits fit T > 1", over > 1.0, f"T={over:.3f}")
 
 
+def test_answer_confidence_formulas() -> None:
+    """Confidence must match TypeSafe's reference adapter, which Kev reproduces.
+
+    The Kev README publishes a worked response, so these are checked against real
+    published numbers rather than against our own implementation.
+    """
+    print("\n7. Choice / score / noul answer formulas vs published examples")
+    from jeb_nano.model import _mean_confidence, _score_confidence, _to_answer
+
+    # Kev README: probabilities {returns: 0.47, shipping: 0.28, billing: 0.25} -> 0.21
+    c = _mean_confidence(torch.tensor([0.47, 0.28, 0.25]))
+    check("choice confidence matches Kev's worked example (0.21)",
+          abs(c - 0.21) < 0.01, f"{c:.4f}; exact formula gives 0.2050, doc rounds to 0.21")
+    check("uniform choice confidence is 0",
+          abs(_mean_confidence(torch.tensor([1 / 3, 1 / 3, 1 / 3]))) < 1e-6)
+    check("one-hot choice confidence is 1",
+          abs(_mean_confidence(torch.tensor([1.0, 0.0, 0.0])) - 1.0) < 1e-6)
+
+    # Kev README: score probs {0: 0.00, 1: 0.56, 2: 0.44} -> score 1.44, confidence 0.34
+    sq = Question(key="frustration", instructions="How frustrated is the customer?",
+                  type="score", options=("Calm", "Frustrated", "Very angry"))
+    a = _to_answer(sq, torch.tensor([0.00, 0.56, 0.44]))
+    check("expected score matches Kev's worked example (1.44)",
+          abs(a.expected_score - 1.44) < 0.01, f"{a.expected_score:.4f}")
+    check("score confidence matches Kev's worked example (0.34)",
+          abs(a.confidence - 0.34) < 0.01, f"{a.confidence:.4f}")
+    check("all mass on one level -> confidence 1",
+          abs(_score_confidence(torch.tensor([0.0, 0.0, 1.0])) - 1.0) < 1e-6)
+    check("uniform spread -> confidence 0",
+          abs(_score_confidence(torch.tensor([1 / 3, 1 / 3, 1 / 3]))) < 1e-6)
+
+    nq = Question(key="escalate", instructions="Does this need urgent attention?", type="noul")
+    na = _to_answer(nq, torch.tensor([0.93, 0.07]))
+    check("noul returns P(true) as confidence", abs(na.confidence - 0.93) < 1e-6)
+    check("noul prediction is Yes", na.prediction == "Yes")
+    check("noul probabilities sum to 1", abs(sum(na.probabilities.values()) - 1.0) < 1e-6)
+
+
 def test_metrics_known_values() -> None:
     print("\n4. ECE and Brier on hand-checkable cases")
     # perfectly confident and perfectly correct -> ECE 0
@@ -198,6 +236,7 @@ def main() -> int:
     test_metrics_known_values()
     test_prompt_contract()
     test_inference_math_matches_reference()
+    test_answer_confidence_formulas()
     print("\n" + "=" * 72)
     if FAILED:
         print(f"FAILED ({len(FAILED)}): " + ", ".join(FAILED))
