@@ -197,6 +197,8 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--workflow", default="customer_service")
     ap.add_argument("--max-cases", type=int, default=60)
+    ap.add_argument("--eval-frac", type=float, default=0.25,
+                    help="share of cases held out. Coverage at a 5%% error budget\n                          is UNMEASURABLE below a few hundred eval questions: a\n                          single early error sets the running rate above the\n                          budget for every smaller prefix. Raise this to 0.6 and\n                          drop --max-cases to get a coverage number worth having.")
     ap.add_argument("--epochs", type=int, default=3)
     ap.add_argument("--lr", type=float, default=1e-4)
     ap.add_argument("--head-lr", type=float, default=1e-3)
@@ -219,7 +221,8 @@ def main() -> int:
     print(f"             which the layer sweep measured as the winner.")
 
     ex = load_examples(args.workflow, args.max_cases)
-    train_cases, calib_cases, eval_cases = split_data(ex, seed=args.seed)
+    train_cases, calib_cases, eval_cases = split_data(
+        ex, eval_frac=args.eval_frac, seed=args.seed)
     eval_rows = [(c[j][0], c[j][1]) for c in eval_cases for j in range(len(c))]
     print(f"\n  train questions : {sum(len(c) for c in train_cases)}")
     print(f"  eval questions  : {len(eval_rows)} (temperature fitted on the first half "
