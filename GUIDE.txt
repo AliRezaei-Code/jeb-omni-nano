@@ -905,6 +905,35 @@ exactly the declared option list. So the SFT recipe in this guide is, in
 substance, a strictly-proper-scoring-rule objective. You do not need a
 reinforcement-learning loop to get the main benefit.
 
+5.1a THE ONE FREE EXPERIMENT: TRAIN CE ALONGSIDE RLCD
+--------------------------------------------------------
+The paragraph above argues CE already gives you the main benefit. **The strongest
+open system in the field argues the same thing, empirically**, and you should test it
+rather than take either of our word for it.
+
+kyr0, who built the best-performing open system on the largest cross-model
+benchmark (76.46% against Jev's 88.08% on 22,001 decisions):
+
+    "btw. just one bit on that. RLCD is overrated guys! Use CE as the primary
+     loss with an eye on Brier+NLL; it's cheaper and more effective!"
+
+Treat this as ONE SOURCE with a competing system and a commercial interest in
+it. It does not overturn anything above. But notice what he is NOT saying: he
+is not saying calibration is unimportant. He is saying **CE gets you there
+more cheaply** -- which is exactly consistent with our own measurement that
+the calibration gap is a FITTING problem (fitted T 3.300 -> 1.050), not a
+training-objective problem.
+
+PRACTICAL CONSEQUENCE: this is the cheapest high-value experiment available
+to you. Same LoRA arm, same seed, same split, CE as the primary loss, Brier
+and NLL reported as metrics instead of as the objective. One extra training
+run. If CE matches RLCD, you have removed a dependency on a method that is
+**not published** -- TypeSafe never released the RLCD objective (see the
+critical caveat above), so training with it is training against folklore.
+
+That is the real argument for the CE arm, and it is stronger than the
+performance claim: **a method you cannot reproduce is a liability.**
+
 Where RL proper training *would* add value: the decision to which option a
 *human* would pick is not the decision to which option the world is true, and
 those differ exactly where the model is useful (routing, escalation, triage). You
@@ -2310,25 +2339,162 @@ limitations stated, and the licence split stated.
 ================================================================================
 CLOSING ARGUMENT
 ================================================================================
+PART 13 -- WHAT THE DEPLOYMENT EVIDENCE CHANGED
+================================================================================
 
-The head is 262,400 parameters. That is 0.0740% of LFM2.5-350M. Everything
-expensive about a decision model is the pretrained backbone and the calibration
-you fit afterwards -- not the thing that actually makes it a decision model.
+Everything in Parts 0-12 came from artefacts: model cards, config files,
+papers, source code. This part is different. It comes from what happened when
+people actually RAN the things, and it changes three of this guide's
+conclusions.
 
-So when you choose the backbone, choose well. We picked LiquidAI's LFM2.5
-because its architecture was searched against real edge latency, because Liquid
-explicitly recommends it for structured extraction and tool use, because it runs
-on a Raspberry Pi at 300 MB, and because its hybrid conv/attention mix is exactly
-the kind of thing that makes single-forward-pass decision models cheap.
+13.1 THE BAR IS 0.766, AND SOMEONE ALREADY CLEARED IT
+----------------------------------------------------
+`typed-decisions` is 2,000 decisions across four workflows -- the same data we
+score on. Open weights, Apache-2.0, at our size class:
 
-Then measure. Fit a temperature. Run the option-name test. Report coverage at
-your error budget. Put the licence split in your README.
+    laya-typed-decisions (421M)               0.766
+    base laya zero-shot (421M)                0.362
+    our LoRA arm (354M, 360 train questions)  0.5633
+    our frozen arm (354M)                     0.3233
 
-That is the whole job.
+Trained by a different person, on ONE RTX 6000 Pro (96 GB), on a fully
+human-annotated corpus. We are ~20 points below, on CPU, with 360 questions
+and 3 epochs.
 
---------------------------------------------------------------------------------
+OUR FINDINGS ARE ABOUT METHOD, and none of them need to be SOTA to be true.
+But be clear-eyed about where you start. If your goal is a working component,
+**steal the weights.** If your goal is to learn the method, you have a 20-point
+gap to close, and that is a good project.
+
+13.2 CALIBRATION IS THE THING TO OPTIMISE, NOT ACCURACY
+-------------------------------------------------------
+This is the most useful thing the deployment layer produced, because it
+independently confirms our own weirdest result.
+
+kyr0, on Laya -- the fastest model in the field, at 36.7 ms:
+
+    "it's fast but only performs well on a non-diverse benchmark, and
+     CALIBRATION IS REALLY BAD"
+
+and his own 76%-accurate model sits at ECE-15 of 13% against Jev's 8.4%. So
+the MORE accurate model is the BETTER calibrated one, and the small fast one
+is the badly calibrated one.
+
+That is our frozen-arm finding (T 3.300, coverage 0.0000 at a 5% budget)
+arriving from the opposite direction, on hardware we do not have.
+
+PRACTICAL CONSEQUENCE: a badly calibrated decision model has NO USABLE OPERATING
+POINT. You cannot threshold it. It is worse to ship than a less accurate but
+well-calibrated model, because an inaccurate-but-honest model tells you when to
+escalate and a dishonest one does not. Optimise calibration first, accuracy
+second. Argmax is nearly free and almost never the thing that is broken.
+
+13.3 DO NOT TRUST ANY LATENCY NUMBER IN THIS FIELD
+--------------------------------------------------
+Four independent measurements of Jev-class latency:
+
+    Jev-Omni's own card         83 ms    in-process, H200, 1 question
+    awesome-jev-projects radar  50-100 ms  UNSTATED shape
+    Ollaya                    236-276 ms  hosted, 5 questions
+    typed-decision-bench       716 ms p50 H200, includes HTTP
+
+A 14x spread. The request shapes differ so much that these may not be the same
+operation. Every source agrees on the DIRECTION -- local small-model decisions
+beat a hosted round trip. Nobody agrees on the multiple.
+
+The largest census of the field says why. Of 693 catalogued projects:
+
+    376 (54%)  "performance and cost benefits have not been independently
+                verified"
+    352 (51%)  "consult the source for the exact decision policy" -- i.e. the
+               reviewer could not confirm what decision the project makes
+
+Only 2 of 693 projects are filed under Classification. 56% of the field is
+orchestration, routing, MCP, guardrails, context GC and evaluation. A field
+whose pitch is "a small model that classifies" is building plumbing around
+classifiers, not classifiers.
+
+PRACTICAL CONSEQUENCE: when you benchmark, publish the REQUEST SHAPE or the
+number is worthless. Measure one question and five. Say whether the network is
+in it. The awesome-jev-projects provenance block is a good template: it states
+WHERE the decision happens and what the project actually offers. Copy that
+discipline into your own repo.
+
+13.4 THE HONEST FAILURE, AND WHY IT IS THE MOST USEFUL THREAD
+-------------------------------------------------------------
+Someone ran Jev against real markets for 24 hours and posted the result:
+
+    731 trades, -3.15% (-$3,150), ~$1,650 of it fees
+    21% of trades profitable after fees
+    779 ms average per decision
+
+The setup was FAIR to the model. Twelve indicators. Candle history. And the
+costs handed to it EXPLICITLY -- commission, exchange fees, slippage,
+round-trip ticks -- with the question posed directly as whether a move was
+likely to clear them. Entry required >50% probability. A hard $500 stop was
+imposed OUTSIDE the model. It churned anyway.
+
+The author's own summary is the lesson:
+
+    "So far, it's very efficient at generating commissions."
+
+The question they could not answer in 24 hours is YOUR question:
+
+    "whether higher probabilities actually lead to better trades after costs"
+
+That is the coverage@5% problem, asked in production instead of on a held-out
+split. And the paired anecdote reached the OPPOSITE conclusion the same week, so
+neither one is evidence -- which is exactly why every measurement in this guide
+is labelled with its seed.
+
+PRACTICAL CONSEQUENCE: do not ship a decision model into a loop that can act.
+The 287-project survey's own summary of how this is used correctly is the
+design brief:
+
+    big model -> Jev -> code -> Jev -> tool -> Jev -> big model
+
+Jev chooses, filters, routes, gates, and judges whether an agent's completion
+claim is supported. Code executes. json-render does not let Jev build the UI.
+The trading bot does not let Jev place orders unguarded. The drone project keeps
+classical control for flight stability and puts Jev one level up.
+
+13.5 TWO SMALL THINGS WORTH STEALING
+-------------------------------------
+1. Laya ships with a 1,024-token default that SILENTLY TRUNCATES long
+   documents, and says so in bold. Make your context handling as loud about it.
+   A decision model that quietly reads half your state is worse than one that
+   refuses.
+
+2. Ollaya and Bonsai-Llama-Jev both implement TypeSafe's /v1/systemone so the
+   OFFICIAL TypeSafe SDKs run unchanged against a local engine. If your
+   deployment survives the model being replaced, the port is cheap; if it does
+   not, every model swap is a rewrite. Make the INTERFACE the artefact.
+
+================================================================================
 REFERENCES
---------------------------------------------------------------------------------
+================================================================================
+
+***ADDED IN THE LAST PASS -- Parts 5.1a and 13 rest on these:***
+
+  ollaya.dev  +  github.com/ollaya-dev/ollaya
+  kyr0.github.io/typed-decision-bench  +  github.com/kyr0/Bonsai-Llama-Jev
+  kyr0.github.io/typed-decision-bench/paper/
+  convaiinnovations/laya model card  +  github.com/NandhaKishorM/laya
+  sqliteai/blink   (C99 typed decisions, zero allocations, 66KB WASM)
+  logicrw/awesome-jev-projects   (the 693-project census)
+  archerhume.com "Jev's Architecture Unmasked"
+  r/LocalLLaMA, r/LLMDevs, r/ai_trading, r/learnmachinelearning
+    -- reached via a public Redlib instance; reddit.com/search.json returns
+       HTTP 403 to unauthenticated agents
+  Hacker News, via the Algolia API -- `websearch` was non-functional for the
+    entire project and the HN API was the working substitute
+
+  The full ledger with 230 sources, including every contradiction between them,
+  is in `.deep-research/sources-ledger.md`.
+
+***Parts 0-12 rest on these:***
+
+------------------------------------------------------------------------
 
 Every factual claim in this guide is traceable to one of these. The full ledger
 with all 200+ sources, including the ones that contradict each other, is in
