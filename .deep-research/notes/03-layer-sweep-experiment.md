@@ -52,7 +52,7 @@ tokens" -- may simply be weaker at 350M scale.
 **Decision: `readout_layer=-1` stays the default**, and the guide now says the sweep
 found nothing better rather than leaving an open question.
 
-Full write-up: `runs/layer-sweep/RESULTS.md`.
+Full write-up: [`04-layer-sweep-results.md`](04-layer-sweep-results.md).
 
 ## Bugs found by running it
 
