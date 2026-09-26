@@ -1692,6 +1692,7 @@ Our `prompt.py` ships `permute()` for this.
         p = permute(q, list(order))
         answers.append(model.decide(state, p))
 
+
 Report the fraction of questions whose *prediction* changes. JevBench's
 `open-alternative-jev` row: with the author's option order the model scored 21%;
 with the options reversed, 72%. Small models are very sensitive to option order.
@@ -1934,6 +1935,80 @@ are hypothetical.
     tokens, and the 77-option case where Laya's label-token approach hits a hard
     0.425 ceiling). We are choosing on a trade-off, not claiming the head is free of
     downside. Test both readouts on your task if you have the budget.
+
+11.10 A MODEL CAN READ A NEGATED RULE AS ITS OPPOSITE, CONFIDENTLY
+----------------------------------------------------------------
+This one should worry you more than the option-name failure, and it comes from the
+same architecture family ours is.
+
+`flock-io/this-that-model` went 1.0 -> 1.1 -> 1.2, and the 1.1 -> 1.2 changelog
+describes the worst failure mode we have found in any of these systems:
+
+    "1.2 fixed *how the rule is written*. 1.1 read `bays without chilled handling
+     are ineligible` as though it named the eligible set -- **not failing to apply
+     the rule but applying its opposite, at 0.88 mean confidence.**"
+
+Read that twice. The model did not fumble the rule, hedge, or refuse. It computed the
+**inverse** of the correct answer and returned it with 88% confidence.
+
+They then measured the same rule written eleven ways, against a chance rate of 0.19:
+
+    1.1   ranges 0.00 to 0.89     <-- four of eleven rows sit BELOW chance
+    1.2   ranges 0.98 to 1.00
+
+Below chance is not guessing. It is systematically wrong in a specific direction.
+
+Note the context: this is the model that scores **0.941 accuracy / 0.042 Brier** on
+the 68-question cohort that the Jev comparison uses. It is a leading system. And it
+inverted a negation.
+
+WHY THIS HAPPENS. A slot-logit or label-token readout has to compress "this option is
+excluded by a condition" and "this option is named by a condition" into a single
+scalar score. Negation is exactly the distinction that compression is worst at, and
+nothing in a cross-entropy loss on argmax labels rewards noticing it.
+
+WHAT TO DO:
+
+1. **Test negation explicitly, before you ship.** Take your rules and write each one
+     both ways -- "eligible if X" and "ineligible if X" -- and check the model
+     inverts correctly. A dozen such pairs will find this in an afternoon.
+2. **Prefer option sets that are mutually exclusive and exhaustive.** If every option
+     is genuinely a distinct case, there is less room for a negation to be missed
+     than if one option is "none of the above" and another is a long negative
+     description.
+3. **Watch the ordinal kernel here.** Our `score` target puts 20% of its mass on
+     adjacent levels, which is right for "how urgent" and wrong for "is this
+     excluded". Ordinal hedging and negation confusion are different failures; do not
+     let a fix for one mask the other.
+
+11.11 AND A WARNING ABOUT YOUR OWN ADVICE
+------------------------------------------
+From the same changelog, and it is worth internalising precisely because this guide
+recommends thresholding:
+
+    "**Read the calibration rows before you upgrade.** 1.1 gave up half the sharpness
+     1.0 had on `sim_local_ood`... **If you threshold `confidence` rather than read
+     the argmax -- which this README spends a section recommending -- that is the one
+     axis where the newest checkpoint is not the best one.**"
+
+The newest model is the best on accuracy and the *worst* on the axis you would use for
+routing. Their `sim_local_ood` qL2: 1.0 **0.0096**, 1.1 0.0203, 1.2 0.0161.
+
+So: **re-fit and re-measure calibration on every checkpoint you consider, including
+ones you believe are upgrades.** "Newer" is not a calibration argument. This is the
+same lesson as refitting temperature per quantisation format, and as the MLX card
+whose held-out ECE got *worse* after its own temperature fit.
+
+The other thing that changelog teaches is a training-data shape you can copy. The 1.1
+release added 64,028 composed-decision questions over 112 rule structures and 40
+domains, plus **two loss terms that only a generator can produce**:
+
+  - the same decision rendered four different ways, which must be answered the same
+  - two different policies over one state, which must NOT be answered the same
+
+That second one is a direct counterexample to the "composed decisions" task, and it is
+the kind of negative pair that teaches a readout to actually use the policy rather
+than pattern-match the state.
 
 ================================================================================
 PART 12 -- SHIPPING

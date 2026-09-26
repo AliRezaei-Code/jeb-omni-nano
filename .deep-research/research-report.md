@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Total sources** | **160** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
+| **Total sources** | **164** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,070 lines |
 
