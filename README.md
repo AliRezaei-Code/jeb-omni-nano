@@ -204,23 +204,30 @@ The project's central assumption -- that you must fine-tune the backbone, not ju
 a head -- was inherited from prior work and never tested. Same data, splits and eval;
 the only variable is whether the backbone's weights can move.
 
-| arm | accuracy | Brier | ECE | coverage @5% | fitted T |
-|---|---:|---:|---:|---:|---:|
-| A — frozen backbone + head | 0.2667 | 0.1371 | 0.1784 | 0.0667 | **2.400** |
-| **B — LoRA r=16 all-linear + head** | **0.5778** | **0.1154** | **0.1204** | 0.0667 | **1.050** |
-| delta | **+0.3111** | −0.0217 | −0.0580 | 0.0000 | −1.350 |
+| arm | accuracy | Brier ↓ | ECE ↓ | fitted T | cov@5% | cov@20% | acc@10% cov |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| A — frozen backbone + head | 0.3233 | 0.1404 | 0.1467 | **3.300** | **0.0000** | **0.0000** | 0.5000 |
+| **B — LoRA r=16 all-linear + head** | **0.5633** | **0.1098** | **0.0646** | **1.050** | **0.0967** | **0.3367** | **0.9333** |
 
-**31 accuracy points** — and for scale, `typed-decisions` puts a base-rate Prior at
-0.470. Arm B clears it, arm A does not.
+**The frozen model can auto-decide nothing.** Coverage at a 5% error budget is
+**0.0000** at n=300 — the budget permits 15 errors and its confidence ranking
+can't spend them safely. Its fitted temperature is **3.300**: the logits are more
+than three times more confident than the accuracy justifies.
 
-The more informative number is the **fitted temperature: 2.400 → 1.050**. A frozen
-head-only model doesn't just score worse, it scores *dishonestly* worse: its raw
-logits are far more confident than its accuracy justifies. LoRA fixed the calibration,
-not only the argmax.
+**LoRA turns it into a usable component.** Coverage 0.0000 → 0.0967 at 5% error and
+0.0000 → 0.3367 at 20%, with the temperature landing at **1.050**.
 
-Caveats: n=45 eval questions, one workflow of four, 198 training questions, 3 epochs,
-CPU. A feasibility probe — the claim is the delta, not the endpoint.
-Reproduce: `python experiments/lora_vs_head_only.py`
+**And the value is concentrated at the top.** The 10% most-confident decisions are
+**93.3% correct** against 56.3% overall (the frozen arm manages 50.0% on the same
+slice). A decision model is worth building for the top of its confidence
+distribution, not its average.
+
+Accuracy, calibration *and* coverage all move together — which is why this reads as
+a real result rather than one lucky metric.
+
+Caveats: one workflow of four, 360 training questions, 3 epochs, CPU. A
+feasibility probe; published recipes use 10k–24k.
+Reproduce: `python experiments/lora_vs_head_only.py --max-cases=1000000 --eval-frac=0.5`
 
 ## What is verified, and what is not
 

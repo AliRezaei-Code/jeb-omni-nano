@@ -1606,10 +1606,9 @@ head. We ported that from Kev and Jebadiah and never tested it. So we tested it:
 same data, same splits, same eval, read-out at L15. The only thing that changed
 is whether the backbone's weights can move.
 
-    arm                                acc     brier     ece    cov@5%      T
-    A  frozen backbone + head       0.2667   0.1371  0.1784    0.0667   2.400
-    B  LoRA r=16 all-linear + head 0.5778   0.1154  0.1204    0.0667   1.050
-    delta                           +0.3111  -0.0217 -0.0580    0.0000  -1.350
+    arm                                acc     brier     ece      T   cov@5%  cov@20%
+    A  frozen backbone + head       0.3233   0.1404  0.1467  3.300   0.0000    0.0000
+    B  LoRA r=16 all-linear + head 0.5633   0.1098  0.0646  1.050   0.0967    0.3367
 
 **31 accuracy points.** For scale, `typed-decisions` puts a base-rate Prior at
 0.470. Arm B clears it; arm A does not.
