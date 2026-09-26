@@ -211,6 +211,9 @@ non-functional) are documented in `research-report.md` § Methodology.
 | 157 | https://huggingface.co/FINAL-Bench/ZTC-Judge-4B | ZTC-Judge-4B | FINAL-Bench | 2026-09 | C | modelcard | 2 | A 4B judge model in the same space, with 9B/27B siblings; shows commercial interest in small judges |
 | 158 | https://huggingface.co/spaces/benchmarkheaven/JevBench/raw/main/README.md | JevBench Space | Benchmark Heaven | 2026-09 | A | docs | 3 | The live leaderboard Space backing the JevBench board cited throughout this ledger |
 
+| 159 | https://www.distillabs.ai/blog/fine-tuning-liquids-lfm25-accurate-tool-calling-at-350m-parameters/ | Fine-Tuning Liquid's LFM2.5: Accurate Tool Calling at 350M Parameters | distil labs (Liquid AI named partner) | 2026-03-30 | B | blog | 5 | **The single most direct evidence for the project premise.** Student LFM2.5-350M, teacher **GPT-oss-120B**. Gorilla 61.4% → **98.0%** (teacher 97.03%); smart home 63.2% → **96.7%** (teacher 92.11%); banking voice 34.5% → **95.9%** (teacher 96.95%). **The 350M student exceeds the 120B teacher on 2 of 3 tasks.** Pipeline: prompt + 20-100 seed examples → teacher generates synthetic data → **validate and filter** → fine-tune student. 5,000 synthetic examples for the shell task. Epoch 1 captures nearly all the gain (61.4→98.0→97.0→98.0→98.0), supporting the one-to-two-epoch finding. Multi-turn compounding: 0.63^5 ≈ 10%. vs FunctionGemma 270M: LFM2.5 base 2-6x stronger (Gorilla 61.4% vs 9.9%). Mechanism note: zero-cache convolution blocks **cut the KV cache by up to 90%** |
+| 160 | https://huggingface.co/LiquidAI/LFM2.5-VL-3B-DSpark/raw/main/README.md | LFM2.5-VL-3B-DSpark | Liquid AI | 2026-09-18 | A | modelcard | 3 | Speculative-decoding drafter for LFM2.5-VL-3B: **279.5M draft params**, 4 full-attention layers, hidden 2048, GQA 32/8, plus a **Markov head (rank 256) + confidence head**; block size 9 training / 8-9 inference; vocab 128,000. **2.66x decode on 1xH100 (SGLang), 3.13x M5 Max (MLX-VLM), 2.14x M3 Ultra (llama.cpp)**, 3.2-4.6 draft tokens accepted per verification pass. **"Speculative decoding is exact under greedy decoding… You get the speedup, not a different model."** Not applicable to a zero-output-token decision model; recorded to close the topic. Follows MMSpec (arXiv 2603.14989) |
+
 ---
 
 ## Rejection log (fetched, then excluded — recorded for auditability)
@@ -240,8 +243,8 @@ non-functional) are documented in `research-report.md` § Methodology.
 | E. Upstream TypeSafe + reverse engineering | 7 |
 | F. Benchmarks, encoders, toolchain | 29 |
 | G. Training datasets | 3 |
-| H. Late-pass finds | 9 |
-| **Total ledger rows** | **158 unique primary sources** |
+| H. Late-pass finds | 11 |
+| **Total ledger rows** | **160 unique primary sources** |
 | Rejection log | 9 |
 
 **On the 200-source threshold.** 146 fully-extracted rows plus 9 logged rejections is 155
