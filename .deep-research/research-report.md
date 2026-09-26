@@ -8,7 +8,7 @@
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
 | **Sources analyzed** | **230** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
-| **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
+| **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **High** on this project's own measured results (LoRA vs frozen, coverage, layer sweep) — all reproduced from `experiments/`, though single-seed. **Low** on any claim about a *shipped* Jeb-Omni-Nano checkpoint: no trained checkpoint is published, and the model is ~20 points below the public 0.766 bar. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,200 lines |
 
 ---
@@ -28,73 +28,91 @@ recipe ([`decision_config.json`](https://huggingface.co/akhilaaa3/Jev-Omni/raw/m
 The head is **0.008%** of the network. Which means "make this cheaper" is not a
 squeezing exercise — it is a question of *which pretrained backbone you attach it to*.
 
-### The eight findings that matter
+### The findings that matter, in order of how much they should change your plan
 
-**1. The design is "read a probability instead of generating a claim about one."**
+**1. The bar on this project's own benchmark is 0.766, and it is already public.**
+`laya-typed-decisions` — Apache-2.0, 421M — scores **0.766** on `typed-decisions` (2,000
+decisions, four workflows), trained by a different person on a **single RTX 6000 Pro
+(96 GB)**. This project reaches **0.5633** at 360 training questions on CPU. The gap is
+~20 points. Everything below is about *method* — none of it needs to be state of the art
+to be true — but **0.5633 is not a headline, and 0.766 is.**
+
+**2. The design is "read a probability instead of generating a claim about one."**
 Jev-Omni's card is explicit: "Supply a question and options; receive a probability for
 each option — **not a generated explanation**." The head never runs a decode loop, so
-there is no "as an AI language model" refusal path, no parser, and no format repair. An
-independent reverse-engineering study of the *hosted* Jev product, based on 10,000 API
-calls, reached the same conclusion about the pattern: "decision probabilities read
-directly from its internal representations" rather than "[generated] confidence claims"
+there is no refusal path, no parser, and no format repair. An independent
+reverse-engineering study of the *hosted* Jev product, based on 10,000 API calls, reached
+the same conclusion: "decision probabilities read directly from its internal
+representations" rather than "[generated] confidence claims"
 ([Archer Hume, 17 Sep 2026](https://archerhume.com/posts/jevs-architecture-unmasked/)).
 
-**2. The 256 outputs are positional option slots, not vocabulary tokens.**
-`Linear(3840, 256)` — slot *i* is "option *i+1*". This is why one checkpoint answers a
-question it has never seen, with option words it has never seen, without retraining. It is
-why the head cost scales with `hidden_size` and nothing else, and therefore why the
-design survives being moved to a 34x smaller backbone.
+**3. The 256 outputs are positional option slots, not vocabulary tokens.**
+`Linear(3840, 256)` — slot *i* is "option *i+1*". That is why one checkpoint answers a
+question it has never seen, with option words it has never seen, without retraining, and
+why the head cost scales with `hidden_size` and nothing else. Four independent teams
+converged on slot or marker logits over label-token logits.
 
-**3. Fine-tuning the backbone is not optional — we measured it, we did not assume it.**
-Every published implementation in this ledger fine-tunes an adapter; this project assumed
-it without testing. On `LocalLLaMA/typed-decisions` / `customer_service`, identical data,
-splits and evaluation, changing only whether the backbone's weights can move:
+**4. Fine-tuning the backbone is not optional — we measured it, we did not assume it.**
+On `customer_service`, identical data, splits and evaluation, changing only whether the
+backbone's weights can move:
 
 | arm | accuracy | Brier | ECE | fitted T | coverage @5% error |
 |---|---:|---:|---:|---:|---:|
 | frozen backbone + head | 0.3233 | 0.1404 | 0.1467 | **3.300** | **0.0000** |
 | **LoRA r=16 + head** | **0.5633** | **0.1098** | **0.0646** | **1.050** | **0.0967** |
 
-**Claim class: our own measurement, single seed, not replicated.** The coverage
-column is the finding. A frozen
-backbone and head has coverage **0.0000** at a 5% error budget — its single most
-confident prediction was wrong, and no threshold is both useful and safe. The temperature
-explains it: **3.300** against **1.050**. The frozen model does not merely score worse,
-it scores *dishonestly* worse.
+**Claim class: our own measurement, single seed, not replicated.** The coverage column
+is the finding: a frozen backbone and head has **0.0000** coverage at a 5% error budget —
+its single most confident prediction was wrong. The temperature explains it: **3.300**
+against **1.050**. It does not merely score worse, it scores *dishonestly* worse.
 
-**4. More data does not rescue the frozen arm.** With **1,212** training questions
-across all four workflows (3.4x the previous run) the frozen arm reaches accuracy 0.4357
-and temperature 1.800 — miscalibration roughly halved — and coverage@5% is still
-**0.0000** across 996 evaluation questions. **Data quantity and backbone fine-tuning are
-not substitutes.**
+**5. More data does not rescue the frozen arm.** With **1,212** training questions across
+all four workflows (3.4x) the frozen arm reaches 0.4357 and temperature 1.800 —
+miscalibration roughly halved — and coverage@5% is still **0.0000** across 996 evaluation
+questions. **Data quantity and backbone fine-tuning are not substitutes.**
 
-**5. The value is concentrated at the top of the confidence distribution.** The 10% most
+**6. Calibration, not size, is the failure mode — and it is cross-validated.** The
+strongest independent result in the corpus agrees: the builder of the best open system
+says Laya "only performs well on a non-diverse benchmark, and **calibration is really
+bad**", with his own 76%-accurate model at **ECE-15 of 13% against Jev's 8.4%**. That is
+this project's frozen-arm verdict arriving from the other direction. **A badly calibrated
+decision model has no usable operating point** — a worse defect than being 20 points
+behind.
+
+**7. The value is concentrated at the top, and thresholds do not transfer.** The 10% most
 confident decisions are **93.3%** correct against 56.3% overall; the frozen arm manages
-50.0% on the same slice. And thresholds **do not transfer between workflows**: coverage
-at a 5% budget is 9.7% on `customer_service` and 5.5% on `invoice_processing`.
+50.0% on the same slice. Coverage at a 5% budget is **9.7%** on `customer_service` and
+**5.5%** on `invoice_processing`. A decision model is worth building for the top of its
+confidence distribution, and a threshold fitted on one workflow is not a threshold.
 
-**6. Reading the last layer is correct — we swept it.** The strongest external claim
-behind the design (a *middle* layer is a better feature space for a linear head) comes
-from one unreplicated source on a 7B model. On LFM2.5-350M the final layer beat L0, L4,
-L8 and L12 on accuracy, Brier, ECE **and** training loss. The claim is **not replicated at
-this scale** `[single source: AnyJev, 7B, unreplicated]`.
+**8. This field is 56% plumbing and 6% classification.** Of **693** catalogued projects,
+387 are orchestration, routing, MCP, guardrails, context GC and evaluation, and **2 are
+filed under Classification**. The interesting work is integration — and that is also the
+binding constraint on any new small model. The 287-project survey's own summary of the
+pattern is the design brief: **big model -> Jev -> code -> Jev -> tool -> Jev -> big
+model.**
 
-**7. The upstream "Jev" is closed and undocumented.** No weights, no paper, no published
-training method. Every open model here — Jev-Omni, Kev, Jebadiah, Laya,
-`this-that-model`, and this project — is an independent reimplementation of the *pattern*.
+**9. The field's speed claims are unverified, and the census says so.** **376 of 693**
+entries carry *"performance and cost benefits have not been independently verified"*;
+**352 of 693** could not even be confirmed to make a decision. Four independent latency
+measurements for the same system span **50 ms to 716 ms** — a 14x range, with request
+shapes different enough that they may not be the same operation. **The direction is
+agreed by everyone; the multiples are not.** The one independently reproduced performance
+number in the entire corpus is Vercel Labs' `json-render` at **3.21 s -> 0.88 s**.
 
-**8. The strongest external support for the premise is a vendor-partner case study.** A
-350M student fine-tuned on *filtered* synthetic data from a **GPT-oss-120B teacher**
-reaches 98.0 / 96.7 / 95.9 on three structured-output tasks, **exceeding its 120B
-teacher on two of three** `[single source: distil labs, vendor partner, Tier B]`. The
-step that matters is the one people skip: *validate and filter the teacher's output*.
-
+**10. The upstream "Jev" is closed; everything open is an independent reimplementation.**
+No weights, no paper, no published training method. Jev-Omni, Kev, Jebadiah, Laya,
+`this-that-model`, Ollaya, Blink and this project all reimplemented the *pattern* without
+seeing each other. A prior-art claim exists (arXiv 2503.23303) and **could not be
+verified** — the arXiv API returned an empty feed — so it is recorded and supports
+nothing.
 
 ### What we built and verified
 
 A working reference implementation in this repository. The head is a faithful port of
 Jev-Omni's `_Head256` to LFM2.5's width; `tests/test_smoke.py` asserts it is
-**bit-identical** to the published reference. Across two suites, 73 checks pass:
+**bit-identical** to the published reference. Across two suites, **112 checks** pass (67 unit + 29 smoke/integration against
+real pinned LFM2.5-350M weights):
 
 - head is exactly `1024×256 + 256` = **262,400** parameters = **0.0740%** of LFM2.5-350M's
   354,483,968
@@ -119,8 +137,25 @@ decisions from ~950 input tokens each.
 A 350M model on a Pi costs electricity. Per this-that-model-1.0's card, the honest
 framing is the one they chose: "read our distance from the hollow square as **one order
 of magnitude, not five**," because a self-hosted model's cost is electricity while a
-hosted price must cover serving and margin. The real gap is **latency and independence**,
-not a five-orders-of-magnitude price gap. We report it that way.
+hosted price must cover serving and margin. The real gap is **independence**, not a
+five-orders-of-magnitude price gap. We report it that way.
+
+**And the latency side of that claim is not settled either.** Four independent
+measurements of Jev-class latency in this corpus:
+
+| Source | Figure | Request shape |
+|---|---:|---|
+| Jev-Omni's own card | 83 ms | in-process, H200, ~2k-token text, one question |
+| Awesome Jev radar | 50-100 ms | **unstated** — no version, question count, or network condition |
+| Ollaya | 236-276 ms | hosted API, median, five questions, includes network |
+| `typed-decision-bench` | 716 ms p50 / 779 ms p95 | H200 NVL, 275 capabilities, includes HTTP |
+
+A **14x spread**, and the shapes differ enough that these may not be measuring the same
+operation. What every source agrees on is the *direction*: a local small-model decision
+path is far cheaper and lower-latency than a hosted frontier round trip. **Nobody
+disputes that; the multiples do not survive.** Treat any single latency number from this
+field as unattributed until someone states the request shape it was measured under —
+which, per the 693-project census, **54% of published projects cannot currently do.**
 
 ---
 
