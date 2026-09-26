@@ -804,3 +804,921 @@ DIVERGED (no consensus):
   - Whether to use soft targets. Jebadiah says yes for rubrics; a benchmark says
     it cut KL by a third; Jebadiah also says a big synthetic soft-label pool made
     things worse. Both can be true: soft targets help, bad soft targets hurt.
+
+================================================================================
+PART 5 -- WHAT "RCLD" ACTUALLY MEANS (you asked; it is two different things)
+================================================================================
+
+There are two distinct things called RCLD/RLCD in this ecosystem. Both matter to
+you. Confusing them is the single most likely reason a beginner mis-builds this.
+
+5.1 RLCD -- REINFORCEMENT LEARNING AGAINST PROPER SCORING RULES
+---------------------------------------------------------------
+Laya (github.com/NandhaKishorM/laya, Apache-2.0, 24,887 stars) states its
+training method as:
+
+    "trained with reinforcement learning against strictly proper scoring rules
+     (RLCD)"
+
+This is the important one, because it is the *theoretical* justification for the
+entire design.
+
+A scoring rule turns a prediction plus an outcome into a loss. Most of them are
+"proper": reporting your true belief minimises your expected loss. A small number
+are **strictly proper**: ONLY reporting your true belief minimises it. A model
+trained against a strictly proper rule has no way to reduce its loss except by
+telling the truth, because any deviation from the truth costs it.
+
+This is exactly the property a decision model needs. It is why the probabilities
+are trustworthy enough to threshold on, and it is why "I asked for 80% confident
+and the model said 80%" means something.
+
+THE PRACTICAL GOOD NEWS: **you are already doing this.** Cross-entropy
+(logarithmic loss) over the option distribution is a strictly proper scoring
+rule. Our trainer's loss is literally
+
+    loss = - sum_k  target_k * log_softmax(logits)_k
+
+That is the strictly proper rule, applied to a distribution whose support is
+exactly the declared option list. So the SFT recipe in this guide is, in
+substance, a strictly-proper-scoring-rule objective. You do not need a
+reinforcement-learning loop to get the main benefit.
+
+Where RL proper training *would* add value: the decision to which option a
+*human* would pick is not the decision to which option the world is true, and
+those differ exactly where the model is useful (routing, escalation, triage). You
+can fine-tune against the *task's* reward with a proper rule -- this-that-model-1.0
+does precisely that, adapting from decider-2b with "a strictly proper scoring
+rule" and reporting that the whole adaptation is a single scalar:
+
+    theta(lambda) = theta_0 + lambda * Delta
+
+with theta(0) bit-exact the prior checkpoint. That is a clean rollback story:
+"rollback is a configuration change rather than a restore." Steal that idea.
+
+5.2 LFM2.5-350M-RLCD -- THE INFERENCE-ONLY EXPERIMENT
+----------------------------------------------------
+`notnotsamuel/LFM2.5-350M-RLCD` is a *different* thing that happens to share the
+name. It is inference-only, changes no weights, and its own README says:
+
+    "**Inference only: no training or fine-tuning, and no reproduction of
+     TypeSafe.ai's proprietary Jev training method.**"
+
+Its contribution is the cache-branching technique described in Part 4.1. If
+someone says "RCLD" and means a *training* method, they mean 5.1. If they mean a
+*Hugging Face repo* on LFM2.5-350M, they mean 5.2.
+
+Both are worth reading. Neither is what we are building; we take the head from
+Jev-Omni, the honesty from RCLD, and the scoring-rule theory from Laya.
+
+================================================================================
+PART 6 -- THE DESIGN, AND WHY EACH PIECE IS THE PIECE IT IS
+================================================================================
+
+6.1 THE FIVE DECISIONS
+----------------------
+    1. Backbone        LFM2.5-350M (text) or LFM2.5-VL-450M (image)
+    2. Readout         last hidden state, one position
+    3. Head            Linear(hidden, 256) on 256 POSITIONAL option slots
+    4. Objective       cross-entropy (a strictly proper scoring rule) at that
+                       position only
+    5. Calibration     one fitted temperature per question type
+
+6.2 DECISION 1: WHICH BACKBONE
+------------------------------
+    Text only, cheapest        -> LiquidAI/LFM2.5-350M
+    Text, more headroom        -> LiquidAI/LFM2.5-2.6B
+    + image                    -> LiquidAI/LFM2.5-VL-450M
+    + image, more headroom     -> LiquidAI/LFM2.5-VL-1.6B
+    Text, classifier-native    -> LiquidAI/LFM2.5-Encoder-350M (bidirectional, 8k)
+    + audio                    -> LiquidAI/LFM2.5-Audio-1.5B (1.5B, speech only)
+
+Use the *instruction-tuned* checkpoint, not `-Base`, unless you have a strong
+reason. Jebadiah measured this directly: the same recipe on the chat checkpoint
+with thinking off was worth 2.15 headline points on their 4B -- more than any data
+change they made across many experiments.
+
+For a first build: **LFM2.5-350M, text only.** Get the whole pipeline correct,
+measure it, and only then add modalities. Multimodal at this scale is a research
+project, and we treat it as one in Part 9.
+
+6.3 DECISION 2: WHERE TO READ
+-----------------------------
+Last token position of the final layer. Three reasons:
+
+  - It is the position the model would have predicted the answer at, so the
+    representation is already "the answer so far".
+  - It costs nothing: no pooling, no gather, no special tokens.
+  - Jev-Omni, Kev, Jebadiah, Laya and this-that-model all read there or
+    equivalent. Convergence across independent implementations is evidence.
+
+One subtlety: if you left-pad a batch (which you should, so the last column is
+always real), `hidden[:, -1]` is correct for every row with no gather. Our
+`collate` left-pads for exactly this reason.
+
+6.4 DECISION 3: SLOT LOGITS vs POINTER SCORING vs LABEL TOKENS
+-------------------------------------------------------------
+Three designs, all published, all working:
+
+    A. SLOT LOGITS (Jev-Omni; we use this)
+       head = Linear(hidden, 256); option i -> slot i
+       + cheapest, simplest, handles unseen option words
+       - 256 output units regardless of question
+
+    B. POINTER SCORING (Kev)
+       score each option's own </opt> hidden state against a <decide> state
+       + handles any number of options, richer
+       - two forward positions, more machinery, and it needs single-token labels
+
+    C. LABEL-TOKEN LOGITS (Jebadiah, this-that-model, Laya)
+       read the LM's own vocabulary logits restricted to the option label tokens
+       + reuses pretrained head knowledge
+       - needs options that are single tokens; this is Laya's documented
+         architectural ceiling on high-cardinality problems
+
+We use A because it is what the model we are copying uses, because it is the
+cheapest, and because it is the most obviously correct for a beginner to reason
+about. If you later need 500 options, revisit B.
+
+6.5 DECISION 4: THE OBJECTIVE
+-----------------------------
+    L = - sum_k  target_k * log softmax(W h)_k        (h = last hidden state)
+
+`target` is a distribution over options, summing to 1. Two variants, both
+implemented and both worth using deliberately:
+
+  - ONE-HOT for `choice` and `noul`. This is the plain cross-entropy.
+  - ORDINAL KERNEL for `score`: put 20% of the mass on each adjacent level.
+    For 5 levels with the gold at index 2 you train toward [0, .2, .6, .2, 0].
+    This says "level 2 is right, but 1 and 3 are not far off", which is the truth
+    about an ordinal judgement. Jebadiah measured the effect: Decision Score on
+    human helpfulness went -21.4 -> +11.9, calibration error 0.39 -> 0.045,
+    with rubric accuracy unchanged. The model stopped being confidently wrong
+    about things it cannot judge.
+
+  - SOFT TARGETS when you genuinely have a distribution. `typed-decisions`
+    measured that carrying the soft gold into a learner that could not represent
+    one cut KL by a third and score MAE by 15%, with accuracy barely moving.
+
+WARNING from the same field: Jebadiah's 14,714-question synthetic pool, labelled
+by their own teacher models, made their 9B *worse*. Soft targets help; bad soft
+targets hurt. Prefer human or public labels.
+
+6.6 DECISION 5: CALIBRATION
+---------------------------
+Fit one temperature per question type on a held-out split, minimising NLL against
+the target you trained on -- NOT against the argmax. Jebadiah's own experiment:
+the hard-argmax fit sharpens (T 0.68/0.96/0.83) and made their rubric calibration
+*worse*; the train-target fit softens (T 1.12/1.33/1.20) and is what they ship.
+
+Our `fit_temperature(logits, targets)` does a 96-point grid search over
+T in [0.25, 5.0]. A grid beats LBFGS here: NLL in T is smooth but nearly flat
+near the optimum, a grid is dependency-free and reproducible, and 96 points costs
+under a millisecond.
+
+You can also ship raw probabilities with `apply_temperature=False`.
+
+6.7 THE PROMPT CONTRACT
+-----------------------
+The renderer and the head are two halves of one contract. The renderer numbers the
+options; the head's slot i is option i+1. Change one, retrain the other.
+
+Our `prompt.py` pins this with a `prompt_sha256`, because every serious
+implementation in this field does. Jebadiah stores the source commit and the
+hash of a verbatim copy of AINode's renderer, and has a test that checks the copy
+against the upstream checkout. Kev ships parity tests. A prompt contract without
+a hash is a prompt contract that will silently drift.
+
+Example output, from `render_request`:
+
+    I was charged twice for order 4411.
+    subject: "Charged twice"
+
+    ---
+
+    QUESTION: Which team should handle this?
+
+    OPTIONS:
+    1. billing
+    2. shipping
+    3. technical support
+
+    Reply with only the number of the correct option (1-3).
+    Output a single number and nothing else.
+
+6.8 QUESTION ISOLATION -- AN HONEST CHOICE
+------------------------------------------
+Should question B be able to see question A's text?
+
+  - ISOLATED (one forward pass per question): B cannot see A. Matches the
+    documented Jev behaviour. Costs one state re-encode per question.
+  - JOINED (one pass, all questions in the prompt): faster. But A and B can
+    influence each other.
+
+We default to ISOLATED, because "does the customer sound angry" silently
+changing "which queue gets the ticket" is a nasty production bug, and because it
+is the semantics the ecosystem documents.
+
+The optimisation is a shared KV cache: encode the state once, reuse the cache for
+each question branch. That is exactly what RCLD does, and it is what makes the
+isolated mode affordable. We did not implement the cached path -- if you need
+it, read `rlcd/engine.py` and its `fork_cache` function first; the subtlety is
+that you must copy the *convolution* state as well as the attention KV, and that
+generic `batch_repeat_interleave` does not handle LFM2's convolution layers.
+
+================================================================================
+PART 7 -- THE CODE THAT EXISTS IN THIS REPOSITORY
+================================================================================
+
+    jeb_nano/head.py     DecisionHead, TemperatureFit, fit_temperature,
+                         probabilities, expected_calibration_error, brier_score
+    jeb_nano/prompt.py   Question, DecisionRequest, render_request,
+                         render_single_question, prompt_sha256, permute
+    jeb_nano/model.py    JebNanoModel: load backbone, install hook, decide()
+    jeb_nano/train.py    LoRA + head trainer, ordinal/soft targets,
+                         fit_temperatures, resolve_backbone
+    tests/test_smoke.py       57 checks, no weights, no network
+    tests/test_integration.py 16 checks against real LFM2.5-350M weights
+
+7.1 VERIFIED BEHAVIOUR -- WHAT WE ACTUALLY RAN
+----------------------------------------------
+Smoke test (no weights needed), 57 checks, all passing:
+
+  - head param count is exactly hidden*256+256; 262,400 on a 1024-wide backbone
+  - the head is 0.0740% of the 354,483,968-parameter LFM2.5-350M
+  - padded slots get exactly probability 0.0; real slots are all > 0
+  - every row's probabilities sum to 1.000000
+  - lower T sharpens, higher T softens, and the argmax is invariant to T
+  - `fit_temperature` recovers a planted T=2.5 as 2.5000
+  - ECE = 0 for confident+correct, 1 for confident+wrong
+  - Brier = 0.25 for a uniform 2-way guess, 0 for perfect one-hot
+  - the head's output is BIT-IDENTICAL to the Jev-Omni reference implementation
+  - confidence formulas reproduce Kev's published worked examples:
+        probabilities {0.47, 0.28, 0.25} -> confidence 0.21
+        probabilities {0.00, 0.56, 0.44} -> score 1.44, confidence 0.34
+
+Integration test, real weights, pinned revision 9e6c6ccf, 16 checks passing:
+
+  - loads in 1.4 s on CPU; hidden_size 1024; head 262,400 params (0.0740%)
+  - a 59-token prompt tokenises cleanly
+  - inference is deterministic across repeated calls
+  - noul, choice and score all return well-formed answers
+  - 337 ms on CPU in fp32 with an untrained head and no causal_conv1d kernel
+
+Training, real weights, 80 examples, 40 steps, 127 s on CPU:
+
+  - loss 1.80 -> 0.31
+  - accuracy 85.0% on the training set
+  - Brier 0.0775, ECE 0.0758, mean confidence 0.9012
+  - LoRA 5,996,544 + head 8,200 = 6,004,744 trainable parameters
+  - temperatures fitted: T[choice] 1.000, T[noul] 0.250
+
+That last run is a *plumbing* demonstration on 12 hand-written sentences, not a
+result. Do not quote it as an accuracy claim. It proves the loop closes.
+
+7.2 TWO REAL BUGS THAT ONLY RUNNING THE CODE FOUND
+---------------------------------------------------
+Worth reading, because you will hit both.
+
+BUG 1: THE CAUSAL-LM WRAPPER RETURNS LOGITS, NOT HIDDEN STATES.
+    `Lfm2ForCausalLM(...)(input_ids=...)` returns `logits` of width 65,536. Our
+    head expected 1,024 and raised. The fix is `resolve_backbone()`, which unwraps
+    to the inner `Lfm2Model`. The guard is deliberate: silently broadcasting a
+    vocab-wide tensor into a decision head produces a model that trains without
+    error and is completely wrong. We validate the width and name the fix.
+
+BUG 2: RAGGED TARGETS DO NOT BROADCAST.
+    A batch with 2-option and 5-option questions produces targets of width 2 and
+    5, which cannot be multiplied against a fixed-width logit tensor. `collate`
+    now pads targets to the batch's widest option count and the loss narrows the
+    logits to match. The padded logits are -1e30, so the dropped terms contribute
+    exactly zero.
+
+A third, found by writing a test against a published example: the score-confidence
+denominator D must use the *declared* number of levels, not the number with
+non-zero probability. A level the model assigned exactly 0.0 is still in the
+legend. The wrong version returned 0.12 where the published example says 0.34.
+
+7.3 MINIMUM USAGE
+-----------------
+    from jeb_nano import Question
+    from jeb_nano.model import JebNanoModel
+    import torch
+
+    model = JebNanoModel(
+        "LiquidAI/LFM2.5-350M",
+        revision="9e6c6ccf47cd318696e137d381a7ded8fe4df09f",  # PIN THIS
+        device="cpu",
+    )
+    # after training:
+    #   model.load_head(torch.load("runs/jeb-nano/head.pt")["head"])
+
+    answer = model.decide(
+        {"subject": "Charged twice", "body": "Two charges on my card."},
+        Question(key="team", instructions="Which team should handle this?",
+                 options=("billing", "shipping", "technical")),
+    )
+    print(answer.prediction)            # "billing"
+    print(answer.confidence)            # TypeSafe's (p_max - 1/K)/(1 - 1/K)
+    print(answer.probabilities)         # {"billing": 0.91, ...}  <- the real output
+    if answer.probabilities[answer.prediction] < 0.7:
+        escalate_to_a_human()           # the calibrated number, not the confidence
+
+================================================================================
+PART 8 -- BUILDING IT, STEP BY STEP
+================================================================================
+
+8.0 ENVIRONMENT
+---------------
+Python 3.11 (3.10 minimum). transformers 5.x is REQUIRED -- the `lfm2` model type
+and the hybrid cache handling do not exist in 4.x. Jev-Omni pins 5.17.0 and RCLD
+was built against 5.17.0, so that is the version we tested.
+
+    python3.11 -m venv .venv
+    source .venv/bin/activate
+    pip install -r requirements.txt
+    pip install peft                      # LoRA
+
+8.1 STEP 1: PROVE THE BACKBONE LOADS
+-------------------------------------
+Before writing a line of training code:
+
+    python tests/test_integration.py
+
+It loads pinned LFM2.5-350M weights, installs the hook, runs noul/choice/score,
+and asserts determinism. If this fails, nothing else matters.
+
+8.2 STEP 2: BUILD YOUR DATA
+---------------------------
+One JSON object per line:
+
+    {"state": "I was charged twice for order 4411.",
+     "questions": {
+       "team":   {"type": "choice",
+                  "instructions": "Which team should handle this?",
+                  "options": ["billing", "shipping", "technical"],
+                  "label": 0},
+       "urgent": {"type": "noul",
+                  "instructions": "Does this need urgent attention?",
+                  "label": 1}}}
+
+`label` is the INDEX of the correct option. For `score` you may use a dict:
+
+    "label": {"index": 2, "soft": [0.0, 0.1, 0.7, 0.2, 0.0]}
+
+WHERE THE DATA COMES FROM -- and this matters more than the training code:
+
+BEST (Apache-2.0, ships gold distributions):
+  - `LocalLLaMA/typed-decisions` -- 1,600 cases, 4 workflows
+    (agent_trace_observability, customer_service, invoice_processing,
+    security_incidents), 5 questions each, GOLD PROBABILITY DISTRIBUTIONS
+    included (mean of 3 teacher samples at temperature 0.7). This is the best
+    training set in the ecosystem for a first build, because the soft targets are
+    the point.
+  - `akhilaaa3/decision-bench` -- 293 questions, 2 subsets, held OUT for eval.
+
+GOOD (human-labelled, for `score` targets):
+  - `nvidia/HelpSteer2` (CC BY 4.0), `mteb/summeval` (MIT)
+  - `google/boolq`, `nyu-mll/glue`, `fancyzhx/ag_news`, `CogComp/trec`
+
+AVOID as a first move: a large pool of LLM-generated labels. Jebadiah's
+14,714-question synthetic pool made their 9B worse. Synthesise to *cover gaps in
+real data*, not to replace it.
+
+SIZE. Kev trained 0.8B/4B/9B on 10,000 public records for two epochs in ~20
+minutes on one H100. Jebadiah's 4B used 11,013 records / 15,813 questions for one
+epoch, 67 minutes on an A100. Jev-Omni used 24,000. For a 350M with LoRA,
+**10k-30k examples is a reasonable target**, and you will get most of the benefit
+from the first 2,000 if they are clean and in-distribution.
+
+8.3 STEP 3: TRAIN
+-----------------
+    python -m jeb_nano.train \
+        --backbone LiquidAI/LFM2.5-350M \
+        --revision 9e6c6ccf47cd318696e137d381a7ded8fe4df09f \
+        --data train.jsonl \
+        --calibration calib.jsonl \
+        --out runs/jeb-nano \
+        --epochs 2 --batch-size 8 --lr 1e-4 --head-lr 1e-4 \
+        --lora-r 16 --lora-alpha 32 --max-options 256
+
+RECOMMENDED STARTING HYPERPARAMETERS, and where each comes from:
+
+    LoRA r=16, alpha=32, dropout 0.05   Kev and Jebadiah both use exactly this.
+    target_modules = "all-linear"      LFM2.5 is hybrid: 10 of its 16 layers are
+                                       convolutions with their own projections. An
+                                       adapter that only touches q/k/v/o leaves
+                                       most of the network frozen. Kev's trainer
+                                       picks targets from the model config for the
+                                       same reason.
+    lr 1e-4 (head also 1e-4)           Kev uses 1e-4 at 0.8B, 5e-5 at 4B/9B.
+                                       Jebadiah uses 1e-4. A 350M can take 1e-4.
+    2 epochs                           Kev: 2. Jebadiah: 1, and explicitly reports
+                                       "two epochs were worse than one" in an
+                                       earlier experiment. Start with 1, try 2.
+    batch 8, bf16                       Kev's exact setting.
+    schedule                            linear warmup (10%) then linear decay to
+                                       10% of peak -- Jev-Omni's schedule.
+    seed                                fix it and record it.
+
+HOLD OUT YOUR CALIBRATION SPLIT. If you do not pass `--calibration`, the trainer
+takes 5%. It must be split BY FAMILY, not randomly by row, so sibling records
+never straddle the boundary -- Jebadiah does this by family hash and it matters
+when your data has near-duplicates.
+
+8.4 STEP 4: THE ORDINAL TARGET IS ON BY DEFAULT FOR `score`
+-----------------------------------------------------------
+`_ordinal_target(2, 5)` returns `[0, 0.2, 0.6, 0.2, 0]`. Twenty percent of the
+mass goes to each adjacent level; the label keeps the rest. At an edge,
+`_ordinal_target(0, 3)` = `[0.8, 0.2, 0]`.
+
+This is the single highest-leverage training decision in the whole guide, and it
+is measured: Jebadiah's HelpSteer2 Decision Score went from -21.4 to +11.9 and
+calibration error from 0.39 to 0.045 when they added human-rated score data and
+switched to an ordinal target. Rubric accuracy did not move. The model became
+honest about not knowing.
+
+8.5 STEP 5: WHAT THE TRAINER PRINTS, AND WHAT IT MEANS
+------------------------------------------------------
+    resolved backbone : Lfm2Model
+    trainable: LoRA 5,996,544 + head 8,200 = 6,004,744 parameters
+
+6.0M trainable out of 354.5M = 1.7%. If that line says LoRA 0, your
+`target_modules` matched nothing and you are training a randomly-initialised head
+against a frozen model. The trainer warns about exactly this.
+
+8.6 STEP 6: MERGE (OPTIONAL)
+----------------------------
+Jebadiah merges with `W' = W + (alpha/r) B A` shard by shard on CPU in fp32,
+stored in bf16, then verifies by re-scoring: 259 of 260 questions gave the same
+pick, and the largest probability difference was 0.0190 (median 0.0021), which is
+bf16 across two devices.
+
+Keep the adapter separate. It is 6M parameters instead of 354M, and merging buys
+you only a small speedup.
+
+================================================================================
+PART 9 -- MULTIMODAL, HONESTLY ASSESSED
+================================================================================
+
+You asked for image, audio and video, like Jev-Omni has. Here is the honest
+version.
+
+9.1 WHAT IS ACTUALLY HARD
+-------------------------
+The head is not the hard part. The hard part is the *encoder budget*.
+
+Jev-Omni's vision tower emits up to 280 soft tokens per image. For a 16-frame
+video that is 4,480 visual tokens before a single word of text. Against
+LFM2.5-350M's 32,768-token context that is 13.7% of the window; against Gemma
+4-12B's 262,144 it is negligible.
+
+**The smaller your text model, the more painful the visual token budget becomes.**
+That is the core tension, and it is why LFM2.5-VL-450M exists.
+
+9.2 THE GOOD NEWS: LIQUID ALREADY SHIPPED A 450M VISION MODEL
+-------------------------------------------------------------
+`LiquidAI/LFM2.5-VL-450M` is LFM2.5-350M plus a **SigLIP2 NaFlex 86M** vision
+tower. Its config:
+
+    text_config   hidden_size 1024, 16 layers, vocab 65,536  (the same 350M)
+    vision_config hidden_size 768, 12 layers, 12 heads, patch 16, num_patches 256
+    projector_hidden_size 2048, downsample_factor 2
+    min_image_tokens 64, max_image_tokens 256, min_tiles 2, max_tiles 10
+    tile_size 512, use_thumbnail true, image_token_id 396
+
+So the visual path is already built and already lands in your 1024-wide backbone.
+You do not have to invent a projector. Its benchmarks (VLMEvalKit): MMStar 43.00,
+RealWorldQA 58.43, MMBench 60.91, POPE 86.93, BLINK 43.92, RefCOCO-M 81.28.
+
+And there is a task-specific sibling: **`LiquidAI/LFM2.5-VL-450M-Extract`**,
+tuned to return user-defined fields as JSON. On a 2,000-sample
+(image, schema, JSON) benchmark: JSON validity 98.9, schema F1 98.8, VLM judge
+84.5 -- beating InternVL3.5-1B (98.0/96.5/80.7) and Qwen3.5-2B (97.9/97.7/89.7)
+while being 4x smaller.
+
+Read that table as the strongest available evidence that a sub-1B multimodal
+model can do genuinely useful, structured work.
+
+9.3 THE PLAN, IN ORDER
+-----------------------
+PHASE 1 (do this first): text only, LFM2.5-350M, full pipeline, measured.
+PHASE 2: swap the backbone to LFM2.5-VL-450M. Change `AutoModelForCausalLM` to
+         `AutoModelForImageTextToText` and `AutoTokenizer` to `AutoProcessor`.
+         `JebNanoModel` already branches on `model_type` containing "vl" and
+         already has a `_build_inputs` media path.
+PHASE 3: collect image decision data and LoRA-tune the projector + backbone.
+         Start from the Extract nano's prompt convention (a YAML field list in the
+         system prompt) rather than inventing one.
+PHASE 4: audio. There is no small Liquid audio decision model. LFM2.5-Audio-1.5B
+         is 1.5B, speech-only, and built for generation, not decisions. You would
+         be building a new audio tower. Do not start here.
+PHASE 5: video. 16 frames = 16 image encodes. Jev-Omni's own reported cost is
+         504 ms for 16 frames on an H200, versus 83 ms for text. Video is ~6x
+         the cost of text at the 12B scale and proportionally worse for you,
+         because your text model has a much smaller context to amortise the
+         frames over. Do video last, or not at all.
+
+9.4 AUDIO, IF YOU MUST
+----------------------
+Match Jev-Omni exactly so your numbers are comparable to published ones:
+
+    ffmpeg -v error -y -i input -t 30 -ac 1 -ar 16000 out.wav
+
+16 kHz mono, 30 s cap. That gives 480,000 samples. Whisper's front end uses
+hop_length 160, so 100 mel frames per second, 3,000 frames for 30 s -- but
+Whisper's encoder only consumes 1,500 positions (15 s) per forward pass, and
+longer audio is chunked.
+
+Jev-Omni's own audio encoder config: `audio_embed_dim 640`,
+`audio_samples_per_token 640`, i.e. 16,000/640 = 25 audio tokens per second, and
+`audio_seq_length 750` for 30 s.
+
+For reference on how small you could go: whisper-tiny is 39M (d_model 384,
+4 encoder layers), whisper-base 74M (d_model 512, 6 layers). Either projects into
+1024 with a linear layer.
+
+9.5 A REALITY CHECK ON THE BENCHMARKS
+-------------------------------------
+    MMAU   10,000 questions, 27 tasks, speech + music + sound, one third music.
+           Gemini Pro v1.5 scores 52.97%. Qwen2-Audio 52.50%. Jev-Omni scores
+           63.10% on the 1,000-question mini split.
+    MVBench 20 temporal tasks the authors say "cannot be effectively solved with a
+           single frame", 4,000 questions. Jev-Omni 53.10% on 14 tasks.
+
+MMAU is brutally hard. If you get 40% on it with a 450M model, that is a real
+result, not a failure. MVBench at 53% is close to what a 12B gets.
+
+9.6 IF YOU SKIP ALL OF THIS
+---------------------------
+A text-only Jeb-Omni-Nano is a genuinely useful product: ticket triage, routing,
+guardrails, moderation, structured extraction, LLM-vs-small-model cascades. Kev
+ships exactly that and calls it a fast base to specialise. You can ship that on
+Tuesday.
+
+================================================================================
+PART 10 -- EVALUATION, AND THE FIVE WAYS TO LIE TO YOURSELF
+================================================================================
+
+10.1 WHAT TO REPORT -- AT MINIMUM
+---------------------------------
+    accuracy           argmax correctness
+    Brier              distribution quality (report it even if ECE looks fine)
+    KL to gold         if you have gold distributions (typed-decisions does)
+    ECE (state the binning)
+    mean confidence    so the reader can see over/under-confidence directly
+    coverage @ error   the share of decisions you can automate at a 5% error
+                       budget. THIS is the number your users actually care about.
+
+`typed-decisions` has the sharpest framing of the coverage number, and it is
+worth stealing: their leaderboard is sorted by accuracy, KL, Brier, latency and
+price per million input tokens, and their "Prior" row -- a model that predicts
+each question's base rate while ignoring the input -- beats the ModernBERT
+specialist on ECE. Guessing the base rate is perfectly calibrated by
+construction. That is the clearest possible argument that ECE alone is not a
+quality metric.
+
+10.2 THE FIVE PITFALLS
+----------------------
+PITFALL 1: COMPARING COSTS PER TOKEN
+    The Cost column in JevBench is dollars per 1,000 DECISIONS, not per 1,000
+    tokens. One decision is a whole question: state, rubric, options -- hundreds
+    to thousands of input tokens. Jev reads ~950 input tokens per decision, so at
+    $0.042/M, 1,000 decisions cost $0.0399. Getting this unit wrong is the single
+    most common error in this field.
+
+PITFALL 2: COMPARING ACROSS REQUEST SHAPES
+    DecisionBench withdrew a chart because of exactly this. Jev-Omni and Jev were
+    sent ONE REQUEST PER QUESTION (state re-sent every time); three chat models
+    were sent ONE REQUEST PER STATE (all of a state's questions together, which is
+    their natural shape and genuinely cheaper for them). That made Jev look ~3x
+    cheaper than it is. The dataset authors then measured the true multiplier:
+    splitting a state into per-question calls multiplies input tokens by 2.82x
+    on medium and 3.09x on hard.
+    RULE: state your request shape next to every number.
+
+PITFALL 3: SPECIALIST vs GENERALIST
+    A specialist is fitted per workflow and cannot answer an unseen question. A
+    generalist handles arbitrary schemas zero-shot. Their scores are NOT
+    comparable. `typed-decisions` states it: "Jev at 0.727 against the specialist's
+    0.646 has not beaten it by eight points... Read the gap as the price of
+    generality, not as a quality ranking."
+    RULE: say which mode you are.
+
+PITFALL 4: IGNORING OPTION ORDER
+    This is the big one, and there is now hard evidence that it is not a rounding
+    error. See Part 11.
+
+PITFALL 5: EVALUATING ON TRAINING DATA
+    Kev-0.8B's card is a model of honesty here: it reports that JevBench's public
+    items, which no training or selection step saw, give a paired gain of
+    "+2.7 pp [-1.8, +7.2]: not distinguishable from zero" on the hard tier, even
+    though the same checkpoint gained +26.9 pp on its in-distribution test. It
+    also notes an eval-only source that got *worse* (When2Call fell from 0.233 to
+    0.133) and says "do not use this checkpoint for tool-call routing."
+    RULE: keep a locked test set, read it once, and report the un-flattering rows.
+
+10.3 THE EVALUATION YOU MUST RUN: OPTION-ORDER ROBUSTNESS
+----------------------------------------------------------
+Our `prompt.py` ships `permute()` for this.
+
+    for order in itertools.permutations(range(q.n_options)):
+        p = permute(q, list(order))
+        answers.append(model.decide(state, p))
+
+Report the fraction of questions whose *prediction* changes. JevBench's
+`open-alternative-jev` row: with the author's option order the model scored 21%;
+with the options reversed, 72%. Small models are very sensitive to option order.
+
+Kev reports an option-order flip rate of 0.07-0.08 for its small models and
+0.00 for Jev. If your flip rate is above ~0.10, do not ship a threshold policy
+until you have fixed it.
+
+10.4 MEASURE LATENCY HONESTLY
+----------------------------
+RCLD's own methodology is the template and it is unusually careful:
+
+  - two untimed warmups, then three measured repetitions
+  - `perf_counter` with device synchronisation before and after the whole request
+  - includes tokenisation, cache copying, all forwards, selection, JSON
+    assembly; excludes model loading
+  - method order alternated, case order seeded and shuffled
+  - "Repeated deterministic answers do not create additional independent accuracy
+    examples."
+  - "Small-sample p95 estimates are descriptive."
+
+And its headline caveat, which you should copy into your own card:
+
+    "This isolates an inference-method comparison; it does not establish the
+     fastest attainable backend on any hardware."
+
+Also: the MLX 4-bit Jev-Omni card reports that the published H200 numbers are
+"not transferable" to a Mac mini, and that its own temperature fit made HELD-OUT
+ECE worse (0.06261 -> 0.06774) even though the fit split improved. That is why
+you fit temperature on a split and evaluate on a different one.
+
+================================================================================
+PART 11 -- WHAT WILL GO WRONG
+================================================================================
+
+We go in order of how likely you are to hit it.
+
+11.1 THE OPTION-NAME FAILURE -- READ THIS ONE TWICE
+----------------------------------------------------
+There is a paper specifically about this, published 2026-09-22:
+"Type-Safe Is Not Error-Free: A Constrained Decision Head Follows the Option Name,
+Not the Rubric Bound to It" (arXiv 2609.26758).
+
+The experiment: keep the question, the state, the rubric wording, and the SET of
+option names exactly the same, and change only WHICH NAME IS BOUND TO WHICH
+RUBRIC. Renaming two options from "0"/"1" to "no"/"yes".
+
+The result, on 1,200 workflow decisions across 4 predicates:
+
+    70.4 more answers changed per hundred   (95% CI [67.6, 73.1])
+    AUC moved from .94 to .23
+
+AUC below 0.5 is not noise. It is a *systematic ranking reversal*. The model has
+stopped reading the rubric and started reading the name.
+
+The findings that make this actionable:
+
+  - The effect is at least 7.4x larger than a neutral-name control, across all
+    four predicates, and GROWS with the number of options.
+  - It depends on read-out geometry: a second model family that mean-pools over
+    the full option span flips 4.1x LESS often. (This is an argument against the
+    pointer-scoring design in Part 6.4, and we think it is the strongest
+    published argument in the ecosystem for slot logits.)
+  - The hosted Jev has it too: AUC .8146 -> .5806, 24x its test-retest flip floor.
+  - Replacing the option names with RANDOM CHARACTER STRINGS returns every model
+    family to the neutral regime, with no accuracy loss.
+
+WHAT TO DO ABOUT IT:
+
+  1. RUN THE TEST. Rename your options, re-run, and measure the AUC delta. It
+     takes an hour and it is the highest-value hour in your project.
+  2. If you are affected, consider neutral or random-ish option identifiers in
+     the prompt, with the human-readable name carried in the rubric. The paper
+     shows this fixes the failure at no accuracy cost. This is a prompt change,
+     not a retrain.
+  3. Keep the option count small. The effect grows with cardinality. Jev-Omni
+     itself says it is "best supported at ≤20 options", and Laya's docs say
+     "keep choice questions under ~20 options."
+  4. Note that the type-error rate stays 0% throughout. A model can be
+     perfectly well-typed and completely wrong. Schema conformance is not a
+     correctness signal.
+
+11.2 THE VOCABULARY LOGIT TRAP
+-----------------------------
+If you use the label-token design (Jebadiah/Laya/this-that), the head competes
+with 65,536 vocabulary logits, and high-cardinality option sets break it. Laya
+scores 0.425 on Banking77 (77 labels) against Jev's 0.870, and their own
+diagnosis is architectural: options share a fixed token budget, so 77 labels get
+~3-4 tokens each and become indistinguishable. Both Laya checkpoints score
+*exactly* 0.425 -- a budget ceiling, not a capability gap.
+
+Our slot design does not have this failure mode. That is a second, quieter
+argument for it.
+
+11.3 PRECISION LOSS UNDER QUANTISATION
+--------------------------------------
+Quantising a 12B decision model to Q4 broke its calibration. The GGUF card for
+Jev-Omni-Q4_K_M says plainly:
+
+    "this Q4 matched the winning option on 3/4 published text verification
+     examples; the maximum absolute probability difference was 0.210. Do not
+     assume source-equivalent probabilities or calibration."
+
+RULE: after any quantisation, re-measure ECE and Brier against the unquantised
+model. If they moved, refit the temperature for the quantised model. Do not ship
+a calibration number measured in a different precision than the one you serve.
+
+11.4 CALIBRATION TRANSFERS TO NOTHING
+-------------------------------------
+Kev-0.8B, in as many words:
+
+    "Probabilities are usable in-domain; treat them as advisory elsewhere."
+    "Out-of-domain Brier / ECE 0.430 / 0.049" while "in-distribution ECE 0.033".
+
+Same model, ECE 0.033 in-distribution and 0.049 out, and a Brier of 0.430. Fit
+your temperature on YOUR data. There is no such thing as a temperature that
+transfers.
+
+11.5 HIGH-CARDINALITY AND THE 20-OPTION CEILING
+-----------------------------------------------
+    Jev-Omni's own card: "Best supported at ≤20 options. The head accepts 256,
+    but quality above 20 is not established."
+    Laya's docs: "Keep choice questions under ~20 options."
+    JevBench documents a 21% -> 72% swing from reversing a 2-option list.
+
+20 is not a round number someone picked. It is where the evidence stops.
+
+11.6 SUB-1B MODELS TRAIL ON KNOWLEDGE
+--------------------------------------
+Kev-0.8B, per-source, out of domain:
+
+    QNLI 0.85 / Jev 0.93       SciQ 0.91 / 0.99
+    MMLU 0.42 / 0.90           PAWS 0.55 / 0.79
+    3-level date arithmetic 0.38 / 0.93
+
+Date arithmetic at 0.38 is barely above the 0.33 chance rate for three levels --
+the model hedges to the middle. Their own note: "Ordinal hedging on date
+arithmetic: collapses to the middle level."
+
+RULE: a small decision model is excellent at classification-shaped questions and
+poor at anything requiring knowledge or precise arithmetic. If you need those,
+cascade: small model decides, large model handles what it flags.
+
+11.7 STACKING LoRA DELTAS IS NOT FREE
+--------------------------------------
+Kev-0.8B needed fifteen registered training rounds. One attempt to stack a skills
+delta on top of a documents delta failed: "the second delta eroded the first:
+seed 1's documents lower bound was -2.03 pp against a -2 pp floor." A later
+joint-training round succeeded where sequential stacking failed.
+
+RULE: if you fine-tune twice, consider training on the union instead.
+
+11.8 THE TEMPERATURE CAN HURT
+-----------------------------
+The MLX 4-bit card: temperature scaling improved ECE on the fit split
+(0.06261 -> better) and made held-out ECE WORSE (0.06261 -> 0.06774).
+
+RULE: always report calibration on a split you did not fit on.
+
+================================================================================
+PART 12 -- SHIPPING
+================================================================================
+
+12.1 PICK YOUR RUNTIME
+----------------------
+    llama.cpp + GGUF      CPU, widest hardware reach. Use for edge/desktop.
+                          Convert:  python convert_hf_to_gguf.py --outfile m.gguf
+                                             --outtype bf16 --remote <repo>
+                          Quantise: ./llama-quantize m.gguf m-Q4_K_M.gguf Q4_K_M
+    MLX                   Apple Silicon. Best measured decode on M-series.
+    ONNX Runtime          Windows/NPU/Web. Liquid ships ONNX exports.
+    OpenVINO              Intel CPU/GPU/NPU. Liquid ships int8 exports.
+    vLLM / SGLang          GPU serving at concurrency.
+    PyTorch               development only.
+
+12.2 THE QUANTISATION LADDER (llama.cpp bits/weight, measured on Llama-3.1-8B)
+-----------------------------------------------------------------------------
+    Q4_K_S   4.6672      good default for edge
+    Q4_K_M   4.8944      the usual choice; best quality at 4 bits
+    Q5_K_M   5.7036
+    Q6_K    6.5633      nearly lossless
+    Q8_0    8.5008      lossless in practice, 2x the memory of Q4_K_M
+    F16    16.0005
+
+For a 350M model, Q8_0 is about 350 MB and Q4_K_M about 210 MB. On a Raspberry
+Pi 5, Liquid reports int8 at 30 tok/s decode and 300 MB resident.
+
+THE HEAD: do NOT quantise it. It is 262,400 fp32 parameters = ~1 MB. Leave it in
+fp32. Liquid's own Nanos guidance is that multimodal encoders and projectors are
+much smaller than the LLM and have an outsized effect on quality, so they are
+usually kept at bf16 or q8.
+
+12.3 A DECISION POLICY, WRITTEN OUT
+-----------------------------------
+The probabilities are for routing. Say so in your docs and your UI.
+
+    p_max = max(answer.probabilities.values())
+
+    if p_max >= 0.90:  act_automatically(answer)
+    elif p_max >= 0.60: queue_for_review(answer)      # sample these, they're
+                                                       # where the errors live
+    else:               escalate_to_a_person_or_a_bigger_model(answer)
+
+Pick those thresholds from a measured accuracy-at-coverage curve on YOUR data, not
+from these numbers. Kev's observation is the right way to think about the middle
+band: at a 5% error budget, Kev can automate 0.45-0.57 of decisions and Jev 0.70.
+The automatable share is a property of your threshold AND your data.
+
+12.4 THE LICENSE FILE YOU NEED
+------------------------------
+Your CODE: MIT. This repository's LICENSE says so and explains the split.
+
+Your WEIGHTS: **LFM Open License v1.0.** Ship a copy of it. Retain attribution
+notices. Mark modified files. No copyleft, so you may keep them proprietary, but
+they are not MIT and they are not OSI-approved. Commercial use needs the entity's
+annual revenue to be under $10M. Contact sales@liquid.ai above that.
+
+Put this in your model card:
+
+    ## License
+    - Code: MIT (see LICENSE)
+    - Weights: LFM Open License v1.0, derived from LiquidAI/LFM2.5-350M
+    - Base weights: (c) Liquid AI, Inc., LFM Open License v1.0
+
+And this, because it is true and because the field is full of near-misses:
+
+    Jeb-Omni-Nano is an independent project. It is not affiliated with, endorsed
+    by, sponsored by, or derived from TypeSafe AI or its Jev model. No Jev output
+    was used in training.
+
+12.5 WHAT TO PUT IN THE MODEL CARD
+----------------------------------
+Copy the discipline of the good ones. Kev-0.8B's card is the best example I have
+found of honest reporting: it leads with what got worse, gives confidence
+intervals on every delta, states that its eval labels are AI-adjudicated, says
+"treat the FlakeFlagger number as unexplained, not as a skill", and publishes the
+plan document with fifteen numbered rounds.
+
+Minimum: base model + pinned revision, exact training recipe, exact data sources
+and licences, all metrics with the binning stated, the request shape stated, the
+limitations stated, and the licence split stated.
+
+================================================================================
+CLOSING ARGUMENT
+================================================================================
+
+The head is 262,400 parameters. That is 0.0740% of LFM2.5-350M. Everything
+expensive about a decision model is the pretrained backbone and the calibration
+you fit afterwards -- not the thing that actually makes it a decision model.
+
+So when you choose the backbone, choose well. We picked LiquidAI's LFM2.5
+because its architecture was searched against real edge latency, because Liquid
+explicitly recommends it for structured extraction and tool use, because it runs
+on a Raspberry Pi at 300 MB, and because its hybrid conv/attention mix is exactly
+the kind of thing that makes single-forward-pass decision models cheap.
+
+Then measure. Fit a temperature. Run the option-name test. Report coverage at
+your error budget. Put the licence split in your README.
+
+That is the whole job.
+
+--------------------------------------------------------------------------------
+REFERENCES
+--------------------------------------------------------------------------------
+
+Every factual claim in this guide is traceable to one of these. The full ledger
+with all 200+ sources, including the ones that contradict each other, is in
+`.deep-research/sources-ledger.md`.
+
+  akhilaaa3/Jev-Omni model card, config.json, decision_config.json, jev_omni.py,
+  processor_config.json, verification.json  (huggingface.co/akhilaaa3/Jev-Omni)
+  akhilaaa3/decision-bench dataset card + DATASET_INFO.md
+  LocalLLaMA/typed-decisions dataset card
+  notnotsamuel/LFM2.5-350M-RLCD  README, docs/BENCHMARKING.md,
+  docs/IMPLEMENTATION_REVIEW.md, results/REPORT.md, rlcd/engine.py
+  LiquidAI/LFM2.5-350M, -Base, -2.6B, -8B-A1B, -VL-450M, -VL-3B, -Audio-1.5B
+  model cards, config.json, LICENSE, processor_config.json
+  Liquid AI: LFM2 Technical Report (arXiv 2511.23404), LFM2.5-350M release post,
+  LFM2.5-VL-3B release post, Liquid Nanos docs, Model License docs,
+  LFM fine-tuning docs (TRL, Unsloth), llama.cpp / MLX / ONNX / vLLM / SGLang docs
+  jaredpalmer/kev README + kev-0.8b model card
+  getainode/jebadiah README + frontier-infra/jebadiah-4b-v2 card
+  NandhaKishorM/laya README
+  FLock-io/this-that-model-1.0 model card
+  logan-markewich/jeff README
+  fstandhartinger/jevbench README
+  apolinario/decision-index README
+  archerhume.com "Jev's Architecture Unmasked" (17 Sep 2026)
+  arXiv 2609.26758 "Type-Safe Is Not Error-Free" (22 Sep 2026)
+  arXiv 2410.19168 MMAU; arXiv 2311.17005 MVBench
+  ggml-org/llama.cpp tools/quantize/README.md
+  Reza2kn/Jev-Omni-Q4_K_M-GGUF, Ruiruiz30/Jev-Omni-MLX-4bit
+
+================================================================================
+END
+================================================================================
