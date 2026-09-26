@@ -1603,14 +1603,16 @@ performance claim. Liquid's own Q4 llama.cpp numbers (2.9K prefill tok/s on AMD 
   therefore **strong on primary artefacts and weak on community discussion** — Reddit,
   Hacker News, Stack Overflow and X threads are essentially absent. Practitioner sentiment
   and informal debate are under-represented; technical claims are not.
-- **Three scouts failed on infrastructure, not on the research**: two upstream provider
-  idle timeouts after 12–16 minutes of successful fetching, one result-payload overflow.
-  Their partial findings were recovered from transcripts and **re-verified independently**
-  before inclusion; recovered claims that could not be re-verified are excluded.
-- **The 200-source floor was met by enumeration breadth, not 200 deep reads.** Roughly 50
-  sources were read in full depth; the rest were read at the level needed to extract
-  their claims (config files, model-card sections, dataset cards). Ledger rows carry a
-  Relevance score so this is visible per source.
+- **Four of eight scouts failed on infrastructure, not on the research**: two upstream
+  provider idle timeouts after 12–16 minutes of *successful* fetching, one
+  result-payload overflow, and one that returned a structured stub. The stub's ledger was
+  recovered from its session backing file (+9 sources). All recovered claims were
+  **re-verified independently** before inclusion; any that could not be were excluded.
+- **The 200-source floor was met by enumeration breadth, not by 200 deep reads.** Roughly
+  60 sources were read at full depth and have per-source notes under
+  [`notes/`](notes/INDEX.md); the remaining ~140 were read at the depth needed to extract
+  their specific claims (config fields, benchmark tables, dataset schemas). Every ledger
+  row carries a Relevance score so this is visible per source.
 
 ### Substantive gaps
 
@@ -1628,17 +1630,37 @@ performance claim. Liquid's own Q4 llama.cpp numbers (2.9K prefill tok/s on AMD 
 - **Question isolation is implemented one-forward-pass-per-question**, not with the
   shared-KV-cache optimisation RCLD demonstrates. Isolation is exact; the cost is real.
   For a 5-question request we do 5 prefills.
-- **The `[dated]` threshold is not applicable** — every substantive source is from the
-  last 12 months (earliest load-bearing: the LFM2 technical report, 2025-11-28,
-  `[dated: 2025]`; MVBench 2023-11-28 and MMAU 2024-10-24, both used only for benchmark
-  *definitions* that have not changed).
-- **Single-source claims** are labelled inline. The most load-bearing are: the LFM
-  licence interpretation (one primary source, but it is the licence text itself), the
-  Liquid speed table (vendor self-reported, not independently verified by us), and the
-  LFM2.5-VL-450M-Extract benchmark (vendor self-reported).
+- **Dated sources are flagged where they carry load-bearing claims.** Four of the 200
+  predate the 12-month window and are marked inline: Guo et al. 2017 `[dated: 2017]`
+  (the origin of the ECE binning debate), Conformal Risk Control 2022 `[dated: 2022]`,
+  Conformal Temperature Scaling 2024 `[dated: 2024]`, and the LFM2 technical report
+  2025 `[dated: 2025]`. MVBench (2023-11-28) and MMAU (2024-10-24) are also older than
+  12 months but are used only for benchmark **definitions**, which have not changed, so
+  they are listed here rather than flagged inline.
 - **We did not measure Liquid's hardware claims on our own hardware.** Every speed number
   in this report is either Liquid's own, RCLD's own, Kev's own, or ours on one unspecified
   CPU with an untrained head. None are cross-verified.
+
+### Single-source claims, listed
+
+Every claim resting on exactly one source, with an assessment of whether that is
+acceptable:
+
+| Claim | Sole source | Assessment |
+|---|---|---|
+| LFM Open License v1.0 permits X, forbids Y | the licence text itself | **Acceptable.** A licence is its own primary source; §1 and §5 were read in full and quoted verbatim. |
+| No MAU threshold, field-of-use restriction or acceptable-use list exists in it | the licence text itself | **Acceptable**, same reason. This corrects an earlier assumption in this research. |
+| `google/gemma-4-12b-it` is tagged Apache-2.0 and ships no LICENSE file | the Hub API record | **Weak.** A tag is metadata, not a licence. The linked Gemma 4 terms were not retrievable, so we flag the question rather than answer it. |
+| Temperature varies by option count with a 3.3× spread | `rlcd-modernbert-151m` `calibrator.json` | **Weak but internally checkable.** One project. The file is self-consistent (log-T exponentiation, per-k grid); the *direction* is corroborated by AnyJev, the *magnitude* is not. |
+| `weight = n/(n+100)`, and the blend is geometric | `Jev-Style-0.8B-Decision-v3` `readout_config.json` | **Strong for our purposes.** We recomputed the identity for all 20 groups and reproduced two stored temperatures to <1e-4. A third matches to 1e-3, so the rule is not perfectly determined and we say so. |
+| T can be < 1.0 | same file | **Weak.** One artefact. The direction is model-specific and cannot be assumed. |
+| Liquid's 9-device speed table | Liquid AI's own release post | **Unverified.** Vendor self-reported; we measured none of it. |
+| LFM2.5-VL-450M-Extract at 98.9 / 98.8 / 84.5 | Liquid AI's own card | **Unverified.** Vendor self-reported. The eval pipeline ships in-repo; we did not run it. |
+| A 350M student beats a 120B teacher | distil labs blog | **Weak.** Vendor partner with a commercial interest; graded Tier B. Model cards are inspectable, but it is *generative* tool calling, not our readout setting. |
+| A middle layer beats the last for a linear head | AnyJev (Nokia + Tencent) | **Unreplicated.** One 7B model, one benchmark, and it contradicts Jev-Omni and Kev. We expose `readout_layer` rather than choosing. |
+| The option-name failure, AUC .94 → .23 | arXiv 2609.26758 | **Unreplicated.** Published four days before this session, on the hosted Jev and two open models. **Not measured on a slot-logit model at 350M**, which is our configuration. |
+| The negation failure at 0.88 confidence | this-that-model changelog | **Unreplicated.** One rule, eleven phrasings, one model version. Prevalence across the class is unknown. |
+| Archer Hume's reverse-engineering of hosted Jev | a single independent blog | **Weak but appropriate.** Explicitly labelled inference by its author, and used only for context, never to support a load-bearing claim. |
 
 ### What would change the conclusions
 
