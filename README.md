@@ -200,6 +200,9 @@ Reproduce: `python experiments/layer_sweep.py`
 
 ## Does LoRA actually help? Measured: +24 accuracy points, and 0% coverage without it
 
+**Scope: single seed (17), not replicated.** A seed-42 replication is running but is blocked by host load (load average 93) and may not complete. Read the accuracy and temperature figures below as order-of-magnitude, not point estimates. The coverage gap (0.0000 vs 0.0967 at n=300) is the least noise-prone claim, since a zero is hard to produce by accident. See `notes/12-seed-robustness-pending.md`.
+
+
 The project's central assumption -- that you must fine-tune the backbone, not just fit
 a head -- was inherited from prior work and never tested. Same data, splits and eval;
 the only variable is whether the backbone's weights can move.

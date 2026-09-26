@@ -55,7 +55,8 @@ splits and evaluation, changing only whether the backbone's weights can move:
 | frozen backbone + head | 0.3233 | 0.1404 | 0.1467 | **3.300** | **0.0000** |
 | **LoRA r=16 + head** | **0.5633** | **0.1098** | **0.0646** | **1.050** | **0.0967** |
 
-**Claim class: our own measurement.** The coverage column is the finding. A frozen
+**Claim class: our own measurement, single seed, not replicated.** The coverage
+column is the finding. A frozen
 backbone and head has coverage **0.0000** at a 5% error budget — its single most
 confident prediction was wrong, and no threshold is both useful and safe. The temperature
 explains it: **3.300** against **1.050**. The frozen model does not merely score worse,
@@ -1161,6 +1162,12 @@ this report follows from the claim that you must fine-tune the backbone. That cl
 inherited from Kev, Jebadiah and Jev-Omni and had never been tested here. Identical
 data, splits and evaluation; read-out at the final layer; the only variable is whether
 the backbone's weights can move.
+
+**Scope: single seed (17), not replicated.** A seed-42 replication was launched and is
+blocked by host load (load average 93); no result is claimed from it. Read the accuracy
+and temperature figures as order-of-magnitude. The coverage gap is the least noise-prone
+claim, since a zero at n=300 is hard to produce by accident
+(`notes/12-seed-robustness-pending.md`).
 
 | arm | train Q | eval n | accuracy | Brier ↓ | ECE ↓ | fitted T | cov@5% | cov@20% |
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
