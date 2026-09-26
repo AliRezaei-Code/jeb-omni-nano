@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Sources analyzed** | **200** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
+| **Sources analyzed** | **211** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,200 lines |
 
@@ -170,12 +170,28 @@ not a five-orders-of-magnitude price gap. We report it that way.
 ### A note on the collection method
 
 Because discovery ran through APIs rather than a general search engine, the corpus is
-**strong on primary artefacts and weak on discussion.** Model cards, config files, source
-code, licence texts, papers and dataset cards are well represented; Reddit threads, Hacker
-News discussions, Stack Overflow answers and news coverage are largely **absent**. The
-technical claims are not affected. The *practitioner discourse* — who is actually shipping
-this, what surprised them, what they got wrong in production — is under-represented, and
-that is a real gap rather than a stylistic one.
+**strong on primary artefacts and thin on discussion.** Model cards, config files, source
+code, licence texts, papers and dataset cards are well represented. **This was written
+before the discussion layer had actually been searched, and it understated the problem:
+it was not thin, it was absent.**
+
+`websearch` returned `usage_limit_reached` on every provider (Codex, ZAI, Startpage,
+Ecosia, Google, Mojeek) from the first attempt through to the last, and no substitute
+was found for most of the project. Near the end, the **Hacker News Algolia API**
+(`hn.algolia.com/api/v1/search`, `…/items/<id>`) was found to work unauthenticated and
+returned complete JSON comment trees. It immediately surfaced a **570-point, 137-comment
+front-page thread posted the day before** on the largest open runtime in this space —
+Ollaya — plus Blink, three more independent implementations, and 169-point reception
+data on the LFM2.5 backbone. **Eleven ledger rows (201–211) and one full note exist only
+because of that late fix.** The failure was mine: I documented a gap I had not tried
+hard enough to close.
+
+The technical claims are unaffected — this project's own measurements dominate the
+report and no claim here rests on a forum post. But the *practitioner discourse* —
+who is shipping this, what surprised them, what they got wrong — was genuinely
+missing, and it turned out to contain an independent confirmation of this report's
+central architectural claim and a challenge to one of its phrases. Both are now
+recorded (SQ2 "The practitioner layer, found late", Contradiction 6).
 
 ## Thematic Findings
 
@@ -491,6 +507,75 @@ mechanism may be weaker at 350M. **The finding is not replicated at this scale, 
 `readout_layer=-1` remains the default** — and the report's claim is downgraded from
 "middle layers are better" to "tested here, not replicated; sweep it on your own data".
 Full write-up: [`notes/04-layer-sweep-results.md`](notes/04-layer-sweep-results.md).
+
+#### The practitioner layer, found late
+
+This subsection exists because the collection method failed for most of the project
+and was fixed at the end. `websearch` returned `usage_limit_reached` on every provider
+from the first attempt, and no substitute was found until the Hacker News Algolia API
+(`hn.algolia.com/api/v1/search`, `…/items/<id>`) turned out to work unauthenticated.
+That pass found a **570-point, 137-comment front-page thread posted one day before it
+ran** — the largest community signal in this entire space, and I had produced 1,959
+lines of research without it. The honest characterisation of the previous state is
+**not** "the discussion layer was thin". It was **absent**, and I did not say so.
+
+**[Ollaya](https://ollaya.dev/)** (Apache-2.0, [github.com/ollaya-dev/ollaya](https://github.com/ollaya-dev/ollaya))
+is "Ollama for decision models": it serves `/v1/systemone` and `/v1/models` in
+TypeSafe's request and response shapes, and **the official TypeSafe Python SDK 0.7.1
+runs against it unchanged** by pointing `TYPESAFE_BASE_URL` at localhost. That is a
+materially different deployment story from "ship your weights" — it makes the
+*interface* the durable artefact and the *weights* replaceable, which is precisely the
+architectural bet this project's `decision-interface` contract makes. Two details
+deserve attention: **every model ships its own calibration and a `Modelfile` refits it
+on your labelled data** (an independent implementation of the per-bucket temperature
+fitting in `calibration.py` — corroboration, not novelty), and weights are pulled from
+their authors' Hugging Face repos pinned to a commit and checked against sha256 rather
+than re-hosted.
+
+The thread's own comment section is where the value is, because it is sceptical:
+
+> *"Are there many models that are comparable to Jev for generic decision making?
+> **Smarter move if you have an eval set is to just train a classifier and call it a day.**"*
+
+> *"The best open ones are close to Jev now, **but they're big models**."*
+
+> *"In a benchmark with actual decisions — navigation, traffic, waypoints — **laya does
+> only slightly better than a small classifier**."*
+
+The last one is the significant claim: an independent report of a **small gap between a
+fast decision model and a plain classifier on real task-shaped decisions**, on a
+benchmark I have never seen and cannot audit `[single source]`. It is not the same claim
+as this project's frozen-backbone result (0.2667 accuracy, 0.0000 coverage at a 5% error
+budget) and the two are **not merged here**. They point the same way from opposite ends
+of the size axis, and the practitioner version has an unseen benchmark behind it.
+
+One commenter also states the mechanism of this entire report, unprompted, having only
+read TypeSafe's announcement:
+
+> *"Their marketing language is misleading. They must still use some transformer
+> language model backbone to encode the text input (BERT or decoder-only LLM). The
+> biggest difference is the output, instead of auto-regressively generating tokens, they
+> produce probabilities over a bounded set of decisions."*
+
+That is the same architectural claim this report reaches from config files, arrived at
+independently by a practitioner. It is also a direct challenge to the phrase "not an
+LLM", which this project should stop repeating flatly — see Contradiction 6 below.
+
+By contrast, another top-level commenter's *"text classification is equivalent to
+decision. This is exactly the same thing Jev does"* is **overstated and this report
+does not adopt it**. Text classification predicts one label from a fixed set; a decision
+model must score an arbitrary per-call option set, handle score and boolean question
+types separately, and calibrate across those sets. The report's SQ4 typing analysis
+supports the narrower version, and this project's own measurements contradict the wider
+one — the three question types do not behave alike.
+
+Three further independent attempts appeared in the same window and are logged in
+`notes/15-community-and-practitioner-sources.md`: [privatemode.ai](https://www.privatemode.ai/blog/system-one-from-glm-flash)
+retrofitting System One behaviour onto GLM-5.3-Flash, [lateos-ai/reflex](https://github.com/lateos-ai/reflex)
+(a name collision with ledger row 89, unrelated project), and
+[sshh12/nanojev](https://github.com/sshh12/nanojev) at 200 lines. Together with Ollaya
+that is **five unrelated teams** converging on a bounded read-out head over a general
+backbone, none of whom needed to have read the others.
 
 ### SQ3 — Liquid AI LFM2 / LFM2.5, exactly
 
@@ -1475,10 +1560,19 @@ structured outputs, and tool use") names our task.
 
 ### Pattern 2 — Convergence is the strongest evidence in the field
 
-Six independent teams, no shared codebase, no shared data, converged on: a small trained
-head, a pretrained causal backbone, LoRA, a fitted per-type temperature, and Brier/KL
+**Ten** independent teams, no shared codebase and no shared data, converged on: a small
+trained head, a pretrained backbone, a fitted per-type temperature, and Brier/KL
 reported next to ECE. When implementations that cannot see each other agree, the
 agreement is worth more than any single paper.
+
+The late community pass raised the count from six to ten, and raised it in the most
+convincing possible way: **[Ollaya](https://ollaya.dev/)** independently ships a
+`Modelfile` that refits per-model calibration on the user's own labelled data — the
+same idea as `calibration.py`, built by a team with no reason to have read it. And
+**[Blink](https://github.com/sqliteai/blink)** reaches the same architecture from the
+opposite direction, stripping it down to C99 with **zero allocations during scoring**
+(mechanically asserted by its test suite, not by inspection) and a 66 KB WebAssembly
+build that runs **18,211 decisions/s** on one core of an Apple M5 Pro.
 
 The one place they diverge — read-out geometry — is exactly where the September 2026
 paper found measurable, consequential differences.
@@ -1542,6 +1636,35 @@ Kev-0.8B: *"It is still a sub-1B model... it trails Jev everywhere it can be com
 are true; they differ in training data, discipline, and what "compared" means. The
 honest summary is that **the architecture is not the bottleneck — the training data and
 the evaluation discipline are.**
+
+### Contradiction 6 — "A decision model is not an LLM" is contested phrasing
+
+TypeSafe's announcement language implies a model that is categorically not an LLM. A
+practitioner on the 570-point HN thread, reading only that announcement, rejects it:
+
+> *"Their marketing language is misleading. They must still use some transformer language
+> model backbone to encode the text input (BERT or decoder-only LLM). The biggest
+> difference is the output, instead of auto-regressively generating tokens, they produce
+> probabilities over a bounded set of decisions."* `[single source]`
+
+This is a comment, not a specification — but it is the same claim this report reaches
+independently from config files, and it agrees. **The resolution is terminological, not
+substantive:** a decision model is a transformer backbone with the decode loop replaced
+by a bounded read-out, and this report's preferred phrasing already says that. What
+should change is the flat assertion that decision models "aren't LLMs" — at least one
+informed reader rejects that framing, and Blink's own README concedes the same point
+from the small end ("*it does not read text the way a pretrained language model does*").
+
+### Contradiction 7 — Latency and capability are separate axes, plotted as one
+
+Ollaya's table puts the **fastest** models at the top: `laya` at 8.1 ms against
+`decider:2b` at 190 ms. But an independent commenter reports that on real decisions —
+"navigation, traffic, waypoints" — *laya* *"does only slightly better than a small
+classifier."* **A 24x latency advantage with a small capability advantage is not a
+24x win**, and the table's own caption concedes the setups differ. This is a second,
+independent confirmation of the discipline this report already applies: **a 2.4x
+latency gap is not a 2.4x capability gap**, and the 8.1 ms figure must not be quoted
+without the accuracy caveat attached.
 
 ---
 
@@ -1610,11 +1733,28 @@ hard) without changing the order." The order is robust; the absolute numbers are
 | Laya | Tesla T4 | 32.8 ms |
 | this-that-model-1.0 | consumer GPU | 30.9 ms |
 | **Jeb-Omni-Nano, untrained** | **CPU, fp32** | **337 ms** |
+| Ollaya `laya:multilingual` | RTX 4090 | 8.1 ms (5-question request) |
+| Ollaya `laya:en` | RTX 4090 | 9.6 ms (5-question request) |
+| Ollaya `gliclass` | RTX 4090 | 14.7 ms (5-question request) |
+| Ollaya `decider:0.8b` | RTX 4090 | 155 ms (5-question request) |
+| Ollaya `decider:2b` | RTX 4090 | 190 ms (5-question request) |
+| **TypeSafe Jev, hosted API** | **third-party, unspecified** | **236–276 ms** |
+| Blink (`blink-tiny`) | Apple M5 Pro, 1 core | 406 µs fresh / 54 µs state-reused |
 
 *Comparability: our 337 ms is a **337 ms untrained fp32 CPU run with no
 `causal_conv1d` kernel installed**, for plumbing verification only. It is not a
 performance claim. Liquid's own Q4 llama.cpp numbers (2.9K prefill tok/s on AMD CPU,
 200 tok/s on a Pi 5) are the relevant ones.*
+
+The Ollaya block is a **single-party measurement of many models on one machine**,
+and the Jev figure in it comes from third-party hosted benchmarks that include the
+network. **The two halves of that row were measured on different hardware by
+different people.** Ollaya's own caption says the right thing: *"Setups differ, so
+read it as an order-of-magnitude comparison."* Its only defensible reading is that
+a local five-question decision request lands somewhere in the 8–190 ms band while a
+hosted Jev round trip lands at 236–276 ms. It is **not** evidence that any of those
+models is more accurate than Jev, and the next section shows why that distinction
+is load-bearing.
 
 ---
 
@@ -1663,6 +1803,22 @@ labelled by source. Every experiment is reproducible from `experiments/`.
     (`LFM2.5-VL-450M-Extract`: 98.9 / 98.8 / 84.5 at 0.45B).
 19. **Do not quantise the head, and refit temperature per format** (Jev-Omni Q4_K_M: max
     probability difference 0.210; a published calibrator fits T per quantisation).
+20. **Know where the floor is: form vs. reading.** Blink, the smallest serious artefact
+    in the field, states it plainly — near perfect where the answer is carried by *form*,
+    *"at or a little above chance, and a frozen 4B model is far ahead"* where it requires
+    *reading*. That is this project's 0.2667-vs-0.5778 gap, described by someone who built
+    the minimal version and measured where it stops working.
+21. **For a fixed task with an eval set, the top-voted answer on the largest thread in this
+    space is: just train a classifier.** *"Smarter move if you have an eval set is to just
+    train a classifier and call it a day."* A general-purpose decision model earns its cost
+    only when you do not know your label set in advance. Choose deliberately.
+22. **Make the interface the artefact, not the weights.** Ollaya runs the **official
+    TypeSafe Python SDK 0.7.1 unchanged** against a local server. If your deployment
+    survives the model being replaced, the port is cheap; if it doesn't, every model swap
+    is a rewrite.
+23. **Latency is not capability.** The fastest model in the ecosystem's headline table
+    (8.1 ms) is independently reported to beat a small classifier only slightly on real
+    decisions. Never quote a latency win without the accuracy number attached.
 
 
 ## Limitations & Gaps
@@ -1672,10 +1828,21 @@ labelled by source. Every experiment is reproducible from `experiments/`.
 ### Method limitations
 
 - **`websearch` failed for the entire session** (all providers: quota 429, timeouts, bot
-  challenges, datacenter-IP blocks). Collection was by direct URL retrieval. The ledger is
-  therefore **strong on primary artefacts and weak on community discussion** — Reddit,
-  Hacker News, Stack Overflow and X threads are essentially absent. Practitioner sentiment
-  and informal debate are under-represented; technical claims are not.
+  challenges, datacenter-IP blocks). Collection was by direct URL retrieval.
+- **The discussion layer was absent until a late fix.** The Hacker News Algolia API was
+  found to work unauthenticated and produced ledger rows 201–211, including a
+  570-point/137-comment front-page thread. Every earlier statement that community
+  sources were "under-represented" understated it: they had not been searched.
+  **`websearch` failing was treated as a reason to narrow scope, when it should have
+  been treated as a reason to find another endpoint.**
+- **Reddit and Stack Overflow remain uncovered.** Reddit's `search.json` returns HTTP 403
+  to unauthenticated agents; Stack Overflow was not searched (Algolia covers HN only).
+  This is a real residual gap, stated rather than papered over. Given the size of what
+  the HN pass alone surfaced, the expected value of a Reddit pass is high and a
+  credentialed fetch is the obvious next step.
+- **The new community sources are Tier C except where noted** and carry no weight in any
+  quantitative claim. Every number in the Ollaya latency table is somebody else's
+  measurement on somebody else's hardware.
 - **Four of eight scouts failed on infrastructure, not on the research**: two upstream
   provider idle timeouts after 12–16 minutes of *successful* fetching, one
   result-payload overflow, and one that returned a structured stub. The stub's ledger was
@@ -1753,7 +1920,7 @@ acceptable:
 
 ## Sources
 
-All 200 sources, with the same numbering as `sources-ledger.md`. Full key claims per
+All 211 sources, with the same numbering as `sources-ledger.md`. Full key claims per
 source are in the ledger; per-source deep notes for the load-bearing ones are in
 `notes/`.
 
@@ -1957,3 +2124,18 @@ source are in the ledger; per-source deep notes for the load-bearing ones are in
 198. [LEAP Finetune](https://docs.liquid.ai/lfm/fine-tuning/leap-finetune.md) — Liquid AI, 2026. Liquid's full customisation repo (`Liquid4All/leap-finetune`): SFT / DPO / GRPO, VLM and MoE variants, LoRA and full fine-tuning; training-time... (Tier A, docs, rel 4)
 199. [Liquid tool-use docs](https://docs.liquid.ai/lfm/key-concepts/tool-use.md) — Liquid AI, 2026. The four-step tool-use workflow (Tier A, docs, rel 3)
 200. [Liquid prompting guide](https://docs.liquid.ai/lfm/key-concepts/text-generation-and-prompting.md) — Liquid AI, 2026. Three prompt roles (system / user / assistant) (Tier A, docs, rel 3)
+
+**I. Community and practitioner sources** (added in a late pass after the Hacker News
+Algolia API was found to work; see Methodology)
+
+201. [Ollaya](https://ollaya.dev/) — Ollaya, 2026-09-25. "Ollama for open-source, Jev-style decision models." The largest community signal in this space: 570 points, 137 comments, HN front page, the day before this pass ran (Tier A, docs, rel 5)
+202. [HN discussion: Ollaya](https://news.ycombinator.com/item?id=49848269) — Hacker News, 2026-09-25. The 137-comment practitioner thread: sceptical, and the source of the report's Contradictions 6 and 7 (Tier C, forum, rel 5)
+203. [ollaya-dev/ollaya](https://github.com/ollaya-dev/ollaya) — the runtime, the model zoo, and the `Modelfile` calibration refit (Tier A, repo, rel 4)
+204. [sqliteai/blink](https://raw.githubusercontent.com/sqliteai/blink/main/README.md) — marcobambini, 2026-09-22. One-pass typed decisions in C99 with zero allocations in scoring, 66 KB WASM, 18,211 decisions/s. Its own honest ceiling: at or a little above chance where the answer requires reading (Tier A, repo, rel 5)
+205. [Show HN: Blink](https://news.ycombinator.com/item?id=49800787) — Hacker News, 2026-09-22. "<200 microseconds per decision, and memory is never allocated while scoring" (Tier C, forum, rel 3)
+206. [Turning GLM-5.3-Flash into a Jev-like decision model](https://www.privatemode.ai/blog/system-one-from-glm-flash) — privatemode.ai, 2026-09-26. Retrofitting System One behaviour onto an existing instruction model (Tier B, blog, rel 3)
+207. [lateos-ai/reflex](https://github.com/lateos-ai/reflex) — a local Jev-like runtime targeting a 16GB NVIDIA GPU. Name collision with ledger row 89, unrelated project (Tier C, repo, rel 2)
+208. [sshh12/nanojev](https://github.com/sshh12/nanojev) — the whole design in 200 lines; evidence of how low the floor is (Tier C, repo, rel 2)
+209. [HN: LFM2.5 2.6B competitive with 4x larger models](https://news.ycombinator.com/item?id=49173107) — Hacker News, 2026-08-04. 169 points, 40 comments: independent reception of this project's chosen backbone (Tier C, forum, rel 3)
+210. [Jev Decision Index](https://huggingface.co/spaces/multimodalart/jev-decision-index) — multimodalart, 2026. A third-party leaderboard, referenced independently in the HN thread (Tier A, docs, rel 4)
+211. [ankit-aglawe/tinyjev](https://github.com/ankit-aglawe/tinyjev) — a fourth local-runtime entry, published as a HF model (Tier C, repo, rel 2)
