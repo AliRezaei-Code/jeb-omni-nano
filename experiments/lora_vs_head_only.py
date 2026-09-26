@@ -195,7 +195,8 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
 
 def main() -> int:
     ap = argparse.ArgumentParser()
-    ap.add_argument("--workflow", default="customer_service")
+    ap.add_argument("--workflow", default="customer_service",
+                    help="comma-separated list; 'all' loads all four typed-decisions\n                          workflows, giving ~4x the training data and testing whether\n                          the model generalises across workflow types")
     ap.add_argument("--max-cases", type=int, default=60)
     ap.add_argument("--eval-frac", type=float, default=0.25,
                     help="share of cases held out. Coverage at a 5%% error budget\n                          is UNMEASURABLE below a few hundred eval questions: a\n                          single early error sets the running rate above the\n                          budget for every smaller prefix. Raise this to 0.6 and\n                          drop --max-cases to get a coverage number worth having.")
@@ -220,7 +221,14 @@ def main() -> int:
     print(f"             trainability changes. Read-out at the final layer (L15),")
     print(f"             which the layer sweep measured as the winner.")
 
-    ex = load_examples(args.workflow, args.max_cases)
+    workflows = (["agent_trace_observability", "customer_service",
+                  "invoice_processing", "security_incidents"]
+                 if args.workflow == "all" else args.workflow.split(","))
+    ex = []
+    for wf in workflows:
+        part = load_examples(wf, args.max_cases)
+        print(f"  loaded {len(part):>5} questions from {wf}")
+        ex.extend(part)
     train_cases, calib_cases, eval_cases = split_data(
         ex, eval_frac=args.eval_frac, seed=args.seed)
     eval_rows = [(c[j][0], c[j][1]) for c in eval_cases for j in range(len(c))]
