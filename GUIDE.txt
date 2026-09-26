@@ -1599,6 +1599,43 @@ RECOMMENDED STARTING HYPERPARAMETERS, and where each comes from:
                                        10% of peak -- Jev-Omni's schedule.
     seed                                fix it and record it.
 
+8.2a WE MEASURED WHETHER LoRA ACTUALLY HELPS. IT DOES -- A LOT.
+----------------------------------------------------------------
+The whole design assumes you must fine-tune the backbone rather than just fit a
+head. We ported that from Kev and Jebadiah and never tested it. So we tested it:
+same data, same splits, same eval, read-out at L15. The only thing that changed
+is whether the backbone's weights can move.
+
+    arm                                acc     brier     ece    cov@5%      T
+    A  frozen backbone + head       0.2667   0.1371  0.1784    0.0667   2.400
+    B  LoRA r=16 all-linear + head 0.5778   0.1154  0.1204    0.0667   1.050
+    delta                           +0.3111  -0.0217 -0.0580    0.0000  -1.350
+
+**31 accuracy points.** For scale, `typed-decisions` puts a base-rate Prior at
+0.470. Arm B clears it; arm A does not.
+
+**But the more interesting number is the temperature: 2.400 -> 1.050.** A large
+fitted T means the raw logits are far more confident than the accuracy
+justifies. So the frozen model does not just score worse, it scores
+**dishonestly** worse. LoRA fixed the calibration, not only the argmax.
+
+That is the concrete mechanism behind jev-lite's "accuracy was flat from step
+250 while ECE fell 0.086 -> 0.019: the model did not learn to be right more
+often, it learned to be honest about when it isn't."
+
+PRACTICAL CONSEQUENCE: if you ship a head-only model, the number you threshold on
+is not meaning what you think. Fit LoRA. And watch the fitted temperature -- if
+it comes out near 1.0 your model is close to self-calibrating; if it is 2+,
+you have a calibration problem regardless of your accuracy.
+
+CAVEATS, so you do not over-read it: n=45 evaluation questions, one workflow
+of four, 198 training questions, 3 epochs, on CPU. This is a feasibility probe,
+not a tuned result -- published work uses 10k-24k examples. The claim is the
+DELTA between arms, not the endpoint.
+
+Reproduce: `python experiments/lora_vs_head_only.py`
+Full write-up: `.deep-research/notes/05-lora-ablation-results.md`
+
 HOLD OUT YOUR CALIBRATION SPLIT. If you do not pass `--calibration`, the trainer
 takes 5%. It must be split BY FAMILY, not randomly by row, so sibling records
 never straddle the boundary -- Jebadiah does this by family hash and it matters

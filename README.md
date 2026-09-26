@@ -198,6 +198,30 @@ weight comes from four indicators agreeing plus a monotonic temperature trend.
 Full write-up: `.deep-research/notes/04-layer-sweep-results.md`.
 Reproduce: `python experiments/layer_sweep.py`
 
+## Does LoRA actually help? Measured: +31 accuracy points
+
+The project's central assumption -- that you must fine-tune the backbone, not just fit
+a head -- was inherited from prior work and never tested. Same data, splits and eval;
+the only variable is whether the backbone's weights can move.
+
+| arm | accuracy | Brier | ECE | coverage @5% | fitted T |
+|---|---:|---:|---:|---:|---:|
+| A — frozen backbone + head | 0.2667 | 0.1371 | 0.1784 | 0.0667 | **2.400** |
+| **B — LoRA r=16 all-linear + head** | **0.5778** | **0.1154** | **0.1204** | 0.0667 | **1.050** |
+| delta | **+0.3111** | −0.0217 | −0.0580 | 0.0000 | −1.350 |
+
+**31 accuracy points** — and for scale, `typed-decisions` puts a base-rate Prior at
+0.470. Arm B clears it, arm A does not.
+
+The more informative number is the **fitted temperature: 2.400 → 1.050**. A frozen
+head-only model doesn't just score worse, it scores *dishonestly* worse: its raw
+logits are far more confident than its accuracy justifies. LoRA fixed the calibration,
+not only the argmax.
+
+Caveats: n=45 eval questions, one workflow of four, 198 training questions, 3 epochs,
+CPU. A feasibility probe — the claim is the delta, not the endpoint.
+Reproduce: `python experiments/lora_vs_head_only.py`
+
 ## What is verified, and what is not
 
 **Verified here:** head shape and dtype, bit-exact parity with the Jev-Omni

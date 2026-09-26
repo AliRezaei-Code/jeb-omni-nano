@@ -1169,6 +1169,45 @@ verifies every proposed token… You get the speedup, not a different model."
 **This does not apply to us.** A decision model generates zero tokens, so there is
 nothing to speculate about. Recorded here to close the topic, not because it helps.
 
+#### What we measured: does LoRA actually help?
+
+**The load-bearing assumption, tested rather than assumed.** Every recommendation in
+this report follows from the claim that you must fine-tune the backbone. That claim was
+inherited from Kev, Jebadiah and Jev-Omni and had never been tested here. Identical
+data, splits and evaluation; read-out at the final layer; the only variable is whether
+the backbone's weights can move.
+
+| arm | accuracy | Brier ↓ | ECE ↓ | coverage @5% | fitted T | train loss |
+|---|---:|---:|---:|---:|---:|---:|
+| A — frozen backbone + head only | 0.2667 | 0.1371 | 0.1784 | 0.0667 | **2.400** | 1.2677 |
+| **B — LoRA r=16 all-linear + head** | **0.5778** | **0.1154** | **0.1204** | 0.0667 | **1.050** | **1.1630** |
+| delta | **+0.3111** | −0.0217 | −0.0580 | 0.0000 | −1.350 | −0.1047 |
+
+**Claim class: our own measurement.** LoRA is worth **31.1 accuracy points** here. For
+scale, `typed-decisions` puts a base-rate `Prior` at 0.470; arm B clears it and arm A
+does not.
+
+**The more informative number is the fitted temperature: 2.400 → 1.050.** A large T means
+the raw logits are far more confident than the accuracy justifies. So a frozen
+head-only model does not merely score worse, it scores *dishonestly* worse — the
+probability a caller would threshold on does not mean what it appears to mean. This is
+the concrete mechanism behind Jebadiah's reported observation that "accuracy was flat
+while ECE fell 0.086 → 0.019: the model did not learn to be right more often, it
+learned to be honest about when it isn't."
+
+**Weight:** n = 45 evaluation questions, one workflow of four, 198 training questions,
+3 epochs, CPU. This is a feasibility probe; published work uses 10k–24k examples. The
+claim is the **delta between arms**, not the endpoint.
+
+**One inconsistency between our own experiments, disclosed.** The read-out layer sweep
+read *pre-norm* activations (hooking a layer module) while this experiment reads
+*post-norm* (calling the backbone, which applies the final RMSNorm). That is why
+frozen+head scores 0.2667 here versus 0.4889 in the sweep. The LoRA conclusion is
+unaffected — both arms here use the identical path — but the two experiments must not
+be compared to each other directly, and the sweep's absolute figures should be read as
+pre-norm. Its layer *ranking* is unaffected, because all five layers were read the
+same way. Full write-up: [`notes/05-lora-ablation-results.md`](notes/05-lora-ablation-results.md).
+
 #### SQ6 verdict
 
 The toolchain is unremarkable and fully available: LoRA → merge → GGUF → llama.cpp, with
