@@ -177,7 +177,7 @@ language model's native output is logits over its whole vocabulary -- 65,536
 numbers for LFM2.5-350M. When someone says "the model scored option A", they
 usually mean "the log-likelihood of the tokens of option A was highest".
 
-9.8 LOGPROB
+1.8 LOGPROB
 -----------
 The log-probability the model assigned to a token it actually produced. This is
 what you get from an LLM API. It is a *generated* number: the model chose to

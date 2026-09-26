@@ -296,6 +296,25 @@ class JebNanoModel(nn.Module):
         ``media`` for the last three. Requires a vision-capable backbone
         (``LiquidAI/LFM2.5-VL-450M`` or larger) — the text-only LFM2.5 checkpoints
         cannot accept media.
+
+        .. warning:: **The text and media paths wrap the prompt differently.**
+
+           * ``modality="text"`` sends the **raw** rendered prompt, with no chat
+             template. That is deliberate and it must stay that way: the trainer
+             builds training examples with :func:`jeb_nano.prompt.render_request`
+             and nothing else, so an inference-time chat template would be a
+             train/inference mismatch.
+           * ``modality != "text"`` goes through the processor's
+             ``apply_chat_template``, because that is the only way the
+             ``<image>``/``<audio>`` placeholder gets inserted in the right
+             place relative to the media and the text.
+
+           **Consequence for anyone training the multimodal variant:** you must
+           train multimodal examples through the *processor's* chat template, not
+           through ``render_request`` alone, or the media path will be trained and
+           served under two different wrappings. ``tests/test_integration.py``
+           pins the text behaviour; the media side is designed but untrained, and
+           this is the first thing to get right when you train it.
         """
         request = DecisionRequest(state=state, questions=[question])
         prompt = render_request(request)

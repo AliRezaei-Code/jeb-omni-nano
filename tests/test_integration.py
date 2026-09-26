@@ -110,6 +110,27 @@ def main() -> int:
           f"(fp32 CPU, untrained head, no causal_conv1d kernel installed)")
 
 
+
+    # Pin the text path's prompt wrapping. The text path sends the RAW rendered prompt
+    # with no chat template, because the trainer builds training examples that way.
+    # The media path goes through the processor's apply_chat_template (it has to, to
+    # insert <image>/<audio>). This test exists so nobody "fixes" the text path into a
+    # mismatch with the trainer by accident.
+    from jeb_nano import render_request
+    req = DecisionRequest(state="The server is down.",
+                          questions=[Question(key="u", instructions="Urgent?", type="noul")])
+    raw = render_request(req)
+    ids = model._encode(raw)
+    decoded = model.tokenizer.decode(ids[0], skip_special_tokens=True)
+    check("text path sends the raw rendered prompt (no chat template)",
+          "<|im_start|>" not in decoded, f"decoded starts: {decoded[:48]!r}")
+    check("text path prompt contains the numbered options block",
+          "QUESTION:" in decoded and "OPTIONS:" in decoded)
+    check("text path prompt ends with the single-number instruction",
+          "Output a single number and nothing else." in decoded)
+    check("training and inference use the same renderer",
+          model._encode(raw).tolist() == ids.tolist())
+
     # Readout-layer sweep. Nokia's AnyJev reports a middle layer beats the last one
     # for a linear head; this proves the option is wired up and actually reads a
     # different layer on real weights.

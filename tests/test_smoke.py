@@ -294,6 +294,77 @@ def test_inference_math_matches_reference() -> None:
     check("max abs difference is 0", float((p - p_ref).abs().max()) == 0.0)
 
 
+def test_validation_branches() -> None:
+    """Every reachable input-validation error, so a bad call fails loudly not silently.
+
+    These are the branches a user can actually hit from a config file or a bad dataset
+    row. Each one raises a message that names the fix rather than a bare assert.
+    """
+    print("\n9. Input validation raises with an actionable message")
+    from jeb_nano import (DecisionRequest, Question, brier_score,
+                          expected_calibration_error, fit_temperature, permute)
+
+    def raises(fn, needle):
+        try:
+            fn()
+        except ValueError as e:
+            return needle in str(e)
+        return False
+
+    q = Question(key="t", instructions="Which?", options=("a", "b", "c"))
+    check("empty question list rejected",
+          raises(lambda: DecisionRequest(state="s", questions=[]), "at least one question"))
+    check("non-permutation rejected",
+          raises(lambda: permute(q, [0, 0, 1]), "permutation"))
+    check("short permutation rejected",
+          raises(lambda: permute(q, [0, 1]), "permutation"))
+    check("fit_temperature rejects mismatched rows",
+          raises(lambda: fit_temperature(torch.randn(4, 3), torch.zeros(5, dtype=torch.long)),
+                 "agree on the number of rows"))
+    check("fit_temperature rejects a 1-D logit tensor",
+          raises(lambda: fit_temperature(torch.randn(5), torch.zeros(5, dtype=torch.long)),
+                 "(n, K)"))
+    check("ece rejects n_bins < 1",
+          raises(lambda: expected_calibration_error(torch.rand(4, 2),
+                                                    torch.zeros(4, dtype=torch.long), 0),
+                 "n_bins must be >= 1"))
+    check("head rejects a wrong-width feature vector",
+          raises(lambda: __import__("jeb_nano").DecisionHead(1024)(
+              torch.randn(2, 512), torch.tensor([2, 2])), "expected hidden_size=1024"))
+    check("head rejects max_options out of range",
+          raises(lambda: __import__("jeb_nano").DecisionHead(64, max_options=999),
+                 "max_options must be in"))
+    # Uniform K-way vs one-hot: sum_k (1/K - y_k)^2 = (1 - 1/K)^2 + (K-1)/K^2
+    #   = (K-1)/K.  Normalised by K that is (K-1)/K^2.
+    # K=2 gives 0.25, which is the scale of the published "uniform" row (0.238).
+    for k in (2, 3, 5, 10):
+        check(f"brier_score uniform {k}-way == (K-1)/K^2",
+              abs(brier_score(torch.full((4, k), 1 / k),
+                               torch.zeros(4, dtype=torch.long)) - (k - 1) / k ** 2) < 1e-6)
+
+
+def test_ordinal_target_edges() -> None:
+    """The ordinal kernel's boundary behaviour, which is easy to get wrong."""
+    print("\n10. Ordinal target kernel boundaries")
+    from jeb_nano.prompt import Question
+    from jeb_nano.train import build_example
+
+    q = Question(key="u", instructions="How urgent?", type="score",
+                 options=("low", "mid", "high"))
+    interior = build_example("s", q, 1).target
+    check("interior label keeps 0.6, neighbours 0.2 each",
+          all(abs(a - b) < 1e-6 for a, b in zip(interior, [0.2, 0.6, 0.2])), str(interior))
+    lo = build_example("s", q, 0).target
+    check("low edge keeps 0.8 with a single neighbour",
+          all(abs(a - b) < 1e-6 for a, b in zip(lo, [0.8, 0.2, 0.0])), str(lo))
+    hi = build_example("s", q, 2).target
+    check("high edge mirrors the low edge",
+          all(abs(a - b) < 1e-6 for a, b in zip(hi, [0.0, 0.2, 0.8])), str(hi))
+    check("label is always the argmax of its own target",
+          all(build_example("s", q, i).target[i] == max(build_example("s", q, i).target)
+              for i in range(3)))
+
+
 def main() -> int:
     print("=" * 72)
     print("Jeb-Omni-Nano smoke test")
@@ -306,6 +377,8 @@ def main() -> int:
     test_inference_math_matches_reference()
     test_answer_confidence_formulas()
     test_option_buckets_and_shrinkage()
+    test_validation_branches()
+    test_ordinal_target_edges()
     print("\n" + "=" * 72)
     if FAILED:
         print(f"FAILED ({len(FAILED)}): " + ", ".join(FAILED))
