@@ -1,0 +1,51 @@
+MIT License
+
+Copyright (c) 2026 Jeb-Omni-Nano contributors
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+---
+
+NOTE ON MODEL WEIGHTS
+
+This MIT license covers the CODE IN THIS REPOSITORY ONLY.
+
+The Liquid AI LFM2.5 base weights are licensed separately under the
+LFM Open License v1.0, which is NOT MIT and NOT OSI-approved. It is based on
+Apache 2.0 but adds a commercial-use limitation: free commercial use is
+restricted to legal entities with under USD 10,000,000 in annual revenue.
+Qualified non-profits are exempt from that threshold for non-commercial or
+research use.
+
+Consequences for this project:
+  - Our training/inference/eval code: MIT (this file).
+  - Trained weights derived from LFM2.5: LFM Open License v1.0. They are NOT
+    MIT-licensed, and redistributing them requires including the LFM license,
+    retaining attribution notices, and marking modified files.
+  - We do not relicense the base weights. The LFM license has no copyleft
+    requirement, so you may keep fine-tuned weights proprietary, but they stay
+    under the LFM terms.
+
+See https://www.liquid.ai/lfm-open-license-v1.0 for the authoritative text and
+https://huggingface.co/LiquidAI/LFM2.5-350M/blob/main/LICENSE for the copy that
+ships with the weights.
+
+Jeb-Omni-Nano is an independent project. It is not affiliated with, endorsed by,
+sponsored by, or derived from TypeSafe AI or its Jev model. No Jev output was
+used in training.

@@ -1,0 +1,29 @@
+# Core (required for the head, prompt contract, and metrics)
+torch>=2.6
+
+# Backbone + tokenizer. LFM2.5 requires transformers 5.x; the `lfm2` model type
+# and the hybrid cache handling do not exist in 4.x.
+# Jev-Omni pins transformers==5.17.0 and RCLD was built against 5.17.0 as well.
+transformers>=5.0.0
+
+# Training
+peft>=0.21          # LoRA adapters
+trl>=0.9.0          # SFT / DPO / GRPO trainers
+accelerate>=1.0     # device_map, multi-GPU
+datasets>=2.14      # loading typed-decisions, decision-bench
+safetensors>=0.4    # weight IO
+huggingface_hub>=0.24
+numpy>=1.24
+
+# Calibration / evaluation
+scipy>=1.10         # optional: LBFGS temperature fit instead of grid search
+
+# Multimodal (only if you extend to image/audio/video)
+pillow>=10.0
+# ffmpeg must be on PATH for audio input (decode + resample to 16 kHz mono)
+opencv-python-headless>=4.9   # video frame sampling
+
+# Optional: quantization
+# bitsandbytes>=0.43            # 4/8-bit training
+# optimum>=1.24                # ONNX export
+# onnxruntime>=1.18            # ONNX inference
