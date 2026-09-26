@@ -42,9 +42,12 @@ not meaning what you think it means.
 - **One workflow** (`customer_service`) of four.
 - **198 training questions, 3 epochs, CPU.** This is a feasibility probe, not a
   tuned result. Published work uses 10k–24k examples.
-- **Coverage at 5% error is 0.0667 (3 questions) in both arms** and is too small to
-  distinguish. It is reported because it is the number a routing policy cares about,
-  not because it is informative at this sample size.
+- **Coverage at 5% error is 0.0667 (3 questions) in both arms, and that number is not
+  informative at n=45.** The frozen arm's first error lands at rank 4, so any budget below
+  25% gives the identical answer. See [`06-coverage-metric-correction.md`](06-coverage-metric-correction.md).
+- A signal that does survive: `accuracy_at_10pct_coverage` = 0.75 for the frozen arm
+  against 0.2667 overall. Confidence *ranking* carries signal even though
+  confidence *values* are miscalibrated.
 - Absolute accuracy is far from any published result; the claim is the **delta between
   arms**, not the endpoint.
 

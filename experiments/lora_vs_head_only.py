@@ -155,15 +155,25 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
     correct = (p.argmax(-1) == labels).float()
     conf = p.max(-1).values
     acc = float(correct.mean())
-    # coverage at a 5% error budget: the share of questions we could auto-decide while
-    # keeping wrong-answer rate under 5%, sweeping the confidence threshold.
-    order = conf.argsort(descending=True)
-    cum_err = 0.0
-    cov5 = 0.0
-    for r, idx in enumerate(order.tolist(), 1):
-        cum_err += 1.0 - float(correct[idx])
-        if cum_err / r <= 0.05:
-            cov5 = r / len(order)
+    # Risk-coverage: the largest share of questions we could auto-decide while keeping
+    # the error rate among accepted at or below `alpha`.
+    #
+    # The running error rate is NOT monotone -- adding correct predictions can bring it
+    # back under threshold -- so this takes the MAX over k, not the first k that passes.
+    # An earlier version used an "update while passing" loop, which meant a single wrong
+    # top-1 prediction drove the rate to 1.0 at k=1 and pinned coverage at 0 forever.
+    # That is what produced the identical, implausibly small 0.0667 in both arms.
+    def coverage_at(alpha: float) -> float:
+        order = conf.argsort(descending=True).tolist()
+        errs = 0
+        best = 0.0
+        for r, idx in enumerate(order, 1):
+            errs += 1.0 - float(correct[idx])
+            if errs / r <= alpha:
+                best = r / len(order)
+        return best
+
+    # Dump per-row outcomes so coverage can be recomputed without retraining.
     return {
         "arm": label, "lora": use_lora, "temperature": round(float(t), 4),
         "n_eval": int(ev_lg.shape[0]),
@@ -171,7 +181,14 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
         "brier": round(brier_score(p, labels), 4),
         "ece": round(expected_calibration_error(p, labels), 4),
         "mean_confidence": round(float(conf.mean()), 4),
-        "coverage_at_5pct_error": round(float(cov5), 4),
+        "coverage_at_5pct_error": round(coverage_at(0.05), 4),
+        "coverage_at_10pct_error": round(coverage_at(0.10), 4),
+        "coverage_at_20pct_error": round(coverage_at(0.20), 4),
+        "accuracy_at_10pct_coverage": round(
+            float(correct[conf.argsort(descending=True)[: max(1, int(0.10 * len(correct)))]].mean()),
+            4),
+        "_per_row": {"confidence": [round(float(x), 6) for x in conf.tolist()],
+                      "correct": [bool(x) for x in correct.tolist()]},
         "seconds": round(time.time() - t0, 1),
     }
 
