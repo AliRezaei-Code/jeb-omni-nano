@@ -121,6 +121,28 @@ Takeaway 23 (*latency is not capability*) into something sharper: **latency clai
 field are mostly unverified, and the ones that have been checked are slower than
 advertised.**
 
+## 5a. Cross-check: the machine-readable index agrees
+
+The directory publishes a machine-readable `llms.txt`. It repeats the headline
+figures, and **every one of the 18 category counts matches the README exactly** --
+693 total, 120 SDK & Decision Frameworks, 69 Domain Tools, 62 CLI, 58 Security &
+Guardrails, 55 Routing, 52 High-Frequency, 50 Browser, 44 Data, 43 MCP, 40 Context
+GC, 29 Evaluation, 25 Decision Tools, 20 Creative, 14 Code Navigation, 6 SDK
+Integrations, 4 Voice, 2 Classification.
+
+**How much this is worth, stated precisely: not much, and it is a consistency check
+rather than independent verification.** Both files come from the same publisher, so
+agreement confirms the directory is internally consistent and that my transcription
+from the README was correct. It does **not** independently confirm the counts are
+accurate about the world -- only the publisher can do that, and note 3 is direct
+evidence that the publisher's *verdicts* are conservative, not that their *counts* are
+audited.
+
+`llms.txt` also lists a `projects.json` and an `llms-full.txt`. **Neither was
+fetched.** They would carry the per-project dataset behind the 376/352 caveat counts,
+which are currently exact `grep -c` counts over the README rather than counts read
+from structured data. That remains the honest gap in this note.
+
 ## 6. Method limits of this note
 
 - Category counts are **as the README's own badge reports them**; I did not recount the
