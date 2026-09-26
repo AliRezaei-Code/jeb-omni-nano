@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Total sources** | **178** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
+| **Total sources** | **186** unique URLs fetched and read (full ledger: `sources-ledger.md`). **This is short of the 200 target** — see *Limitations & Gaps* for why, and why the count was not padded. |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,070 lines |
 
@@ -367,6 +367,29 @@ label tokens: `p_k(j|x) = softmax_j(⟨w_ℓ(k,j), h_k⟩ / τ)`, normalised ove
 declared labels, so "the support of that distribution **is** your option list"
 ([this-that-model-1.0](https://huggingface.co/flock-io/this-that-model-1.0/raw/main/README.md)).
 Used by Jebadiah, Laya, this-that-model.
+
+**And now a preregistered answer to "does the read-out cost accuracy?".**
+`r-ms/mini-jev` ran a preregistered study (`PREREG.md`, amendments v1.1–v1.3) on a
+*frozen* Qwen3-4B-Instruct-2507 over CLINC150, every number recomputed from stored run
+records. Reading an option **letter** rather than generating JSON under a grammar costs
+no accuracy: **6,750 paired observations, JSON 0.909 vs letters 0.907, Δ −0.22 pp, 95% CI
+[−1.44, +1.04], and every k from 2 to 16 has a CI covering zero.** It is also **4× faster**
+on short texts, and 1.4–2.4× faster on 2048-token texts *with a shared-prefix cache*
+(while the naive per-field re-read is 1.10–1.16× *slower*).
+
+Two results in it change design advice rather than confirming it:
+
+- **A letter beats writing the option's name by +10.0 pp [+8.3, +11.7]** on intent and
+  +13.2 pp on domain. *"The single lever that changed accuracy was giving the model a
+  one-token identifier to answer with."* That argues for a symbolic option slot over
+  scoring option text — which is what slot logits are.
+- **Never let the model write its own probabilities.** Same units, same options: letters
+  score **0.896**, a probability-writing format scores **0.346**, and 62% of its "choices"
+  are the first option.
+
+And one caveat we must carry: the raw option shares from a logit read are *"normalized
+candidate scores, **not calibrated probabilities**… do not read the percentage as
+P(correct)."* That is precisely the gap our temperature fit closes.
 
 **Design C has a documented architectural ceiling.** Laya scores 0.425 on Banking77 (77
 labels) against Jev's 0.870, and diagnoses it exactly: options share a fixed

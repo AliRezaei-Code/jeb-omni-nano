@@ -1001,6 +1001,57 @@ We use A because it is what the model we are copying uses, because it is the
 cheapest, and because it is the most obviously correct for a beginner to reason
 about. If you later need 500 options, revisit B.
 
+6.4a THE PREREGISTERED EXPERIMENT ON THIS EXACT DECISION
+-----------------------------------------------------------
+Before you accept any of the three read-out options, read `r-ms/mini-jev`. It is the
+only **preregistered** study of this question (`PREREG.md`, amendments v1.1-v1.3),
+run on a frozen Qwen3-4B-Instruct-2507 over CLINC150, with every number recomputed
+from stored run records. It asks: how much of a Jev-style interface does an ordinary
+frozen model already give you, if you read the logits instead of generating JSON?
+
+    "Does reading the letter lose accuracy vs generating JSON under a grammar?
+     **No.** 6750 paired observations on 450 texts: JSON 0.909, letters 0.907,
+     Δ -0.22 pp, 95% CI [-1.44, +1.04]. **Every k from 2 to 16 has a CI covering
+     zero.**"
+
+So the decode-loop saving is close to free on a frozen model. Three further results
+change what we would otherwise tell you:
+
+1. **A letter beats writing the option's NAME by +10.0 pp [+8.3, +11.7]** on intent
+   classification, and +13.2 pp on domain. Their summary:
+
+       "The single lever that changed accuracy was **giving the model a one-token
+        identifier to answer with**."
+
+   This is an argument *for* a symbolic option slot over scoring option text --
+   which is what slot logits do.
+
+2. **Never ask the model to write its probabilities as numbers.** Same units, same
+   options: letters score **0.896**, a probability-writing format scores **0.346**,
+   and 62% of its "choices" are simply the first option. If you have ever seen a
+   model emit `{"confidence": 0.91}`, this is the measurement of why that is a bad
+   idea.
+
+3. **The caveat that matters most for us.** From their own field table:
+
+       "the shares are **normalized candidate scores, not calibrated probabilities**;
+        use the gap for abstention, **do not read the percentage as P(correct)**"
+
+   Reading option logits and calling the result a probability is exactly the mistake
+   `fit_temperature` and our per-bucket fits exist to fix. Their setup has no
+   temperature fit and no calibration split; ours does. Do not skip it just because
+   the numbers look like probabilities.
+
+Speed, measured on the same runs: **4x faster than JSON on short texts**, and
+1.4x / 1.8x / 2.4x faster on 2048-token texts *with a shared-prefix cache* -- while
+the naive form that re-reads the text per field is **1.10-1.16x slower**. That is
+the whole argument for implementing the cached branch (Part 6.8).
+
+One more result to know before you design the interface: a **dependent field** does
+better written after the field it depends on, inside one JSON (+5 pp). If question B
+genuinely depends on the answer to question A, isolation is costing you accuracy, and
+you should put the dependency in the prompt rather than chaining it yourself.
+
 6.5 DECISION 4: THE OBJECTIVE
 -----------------------------
     L = - sum_k  target_k * log softmax(W h)_k        (h = last hidden state)

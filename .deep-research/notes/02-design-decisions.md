@@ -43,9 +43,21 @@ the failure is **4.1× weaker** in "a second model family that mean-pools over t
 option span", i.e. a pointer-style reader. Our choice happens to be the more robust
 one on the newest available evidence.
 
+**A preregistered study supports the symbolic-slot half of this.** `r-ms/mini-jev`
+runs a preregistered experiment on a frozen Qwen3-4B and measures that giving the model
+a **one-token identifier** to answer with beats writing the option's name by **+10.0 pp
+[+8.3, +11.7]** on intent and +13.2 pp on domain. It also shows the choice between
+letter-readout and grammar-constrained JSON is accuracy-neutral (Δ −0.22 pp, CI
+[−1.44, +1.04], with every k from 2 to 16 covering zero) and 4x faster.
+
 **Cost of the choice.** Slot logits need a prompt that numbers the options, and they
 cannot score 500+ options without growing the head. Pointer scoring is richer; we accept
 the trade for a 350M model where simplicity and robustness win.
+
+**The caveat we must not skip.** That same study warns that its raw option shares are
+"normalized candidate scores, **not calibrated probabilities**" and that you must not
+read the percentage as P(correct). A trained head plus a fitted temperature is what
+converts scores into probabilities -- which is exactly what D8 exists for.
 
 **What would change our mind.** A published permutation-robustness result showing slot
 logits are *equally* affected by the option-name failure at small scale. Then
