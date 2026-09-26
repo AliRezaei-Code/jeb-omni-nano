@@ -222,7 +222,8 @@ decision model with no fine-tuning.
 We were reading the last layer because that is what Jev-Omni does. Now `readout_layer=`
 is a constructor argument (default `-1`, preserving parity) and the integration test
 sweeps `-1 / -8 / -12` on real weights. **The finding that a middle layer wins is
-untested on our data and is the first experiment to run.**
+**since been measured, and it did not replicate** — the last layer won on accuracy,
+   Brier, ECE and training loss. See [`04-layer-sweep-results.md`](04-layer-sweep-results.md).**
 
 **(b) A closed-form head beats LoRA when you have 100–300 labels.**
 

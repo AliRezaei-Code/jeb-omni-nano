@@ -138,10 +138,28 @@ The intuition generalises: the last layers specialise for emitting the next toke
 linear readout wants a layer that still represents meaning. On a 16-layer LFM2.5-350M
 the middle is around 10–12.
 
-**Status.** Wired and tested. **The claim that a middle layer wins is untested on our
-data.** Two bugs were found while wiring it, both only visible when actually run:
-`Lfm2DecoderLayer` returns a plain `Tensor` (so the old `out[0]` indexed the *batch*
-axis), and one of our own edits had dropped the `register_forward_hook` call.
+**Status: MEASURED. The finding does NOT replicate at 350M.** Frozen LFM2.5-350M, a
+fresh head per layer, real typed-decisions data with soft gold distributions,
+temperature fitted and reported on different halves of a held-out set:
+
+| layer (from end) | train loss | accuracy | Brier | ECE | fitted T |
+|---|---|---|---|---|---|
+| L0 (-16) | 1.2877 | 0.4000 | 0.1360 | 0.2258 | 0.350 |
+| L4 (-12) | 1.2875 | 0.4000 | 0.1360 | 0.2256 | 0.350 |
+| L8 (-8) | 1.2760 | 0.4000 | 0.1358 | 0.2268 | 0.600 |
+| L12 (-4) | 1.2665 | 0.4000 | 0.1346 | 0.2203 | 0.750 |
+| **L15 (-1)** | **1.2508** | **0.4889** | **0.1312** | **0.1360** | **0.900** |
+
+**The last layer wins on four independent indicators.** n=45, so the accuracy gap is 4
+questions; the weight is the agreement of all four plus a monotonic temperature trend.
+AnyJev measured a 7B model. `readout_layer=-1` stays the default. Full write-up:
+[`04-layer-sweep-results.md`](04-layer-sweep-results.md).
+
+Three bugs surfaced while building the experiment, all invisible without running it: case
+dedup on `prompt[:160]` collapsed every question into one bucket; the gold schema was
+*assumed* rather than dumped (`criteria` is a dict for choice/noul and a **list** for
+score); and a hand-rolled layer loop omitted `position_embeddings`, so every attention
+layer raised.
 
 ---
 
@@ -274,7 +292,8 @@ message records the one-line revert.
 - **Multimodal is designed, not trained.** The media code path and preprocessing
   conventions match Jev-Omni's, but nothing has been run on real media. The
   LFM2.5-VL-450M recommendation is a prediction from published benchmarks.
-- **The readout-layer finding is untested on our data.** Wired, not validated.
+- **The read-out layer sweep IS run** (see D6): frozen backbone, head-only, one
+  workflow, n=45 at eval. It rules out the frozen-350M case, not a LoRA-tuned one.
 - **The source count is 160, not 200.** `websearch` failed for the entire session, which
   removed the whole discovery surface for forums, blogs, HN and news. We logged the
   shortfall rather than padding the count, and no row is duplicated to close the gap.
