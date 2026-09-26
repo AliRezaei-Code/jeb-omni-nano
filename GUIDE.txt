@@ -1245,7 +1245,7 @@ correctly, not from fitting it better. Check yours loads.
 These arrived after the core design was written and each one should change what you
 do. They are the reason this section exists.
 
-6.10.1 DO NOT READ THE LAST LAYER. READ A MIDDLE ONE.
+6.10.1 WE TESTED IT. ON OUR CONFIGURATION, THE LAST LAYER WON.
 
 Nokia's AnyJev (github.com/nokia-applied-research/AnyJev, with Tencent Hunyuan,
 Apache-2.0) reports:
@@ -1257,20 +1257,43 @@ Apache-2.0) reports:
 
     "Depth is usually a gain, not a trade."
 
-The intuition is right and it generalises. The last layers of a causal LM are
-specialised for producing the next token. A linear readout wants a layer that
-still represents *meaning*, not one that has already collapsed meaning into
-token identity. And the truncated model is smaller, which is what you wanted anyway.
+**WE RAN THE EXPERIMENT. IT DOES NOT REPLICATE HERE.**
 
-**Our implementation reads the last layer**, because that is what Jev-Omni does and
-we were porting Jev-Omni. Treat that as the first thing to sweep:
+Frozen LFM2.5-350M, a fresh head trained per layer so the read-out layer is the ONLY
+variable, real `typed-decisions` data with soft gold distributions, temperature fitted on
+one half of a held-out set and reported on the other:
 
-    for layer in [-1, -2, -3, -5, -8, -12]:
-        measure accuracy, ECE and Brier at that layer, with the head refit
+    layer        train loss   acc     brier    ece      T
+    L0  (-16)    1.2877       0.4000  0.1360   0.2258   0.350
+    L4  (-12)    1.2875       0.4000  0.1360   0.2256   0.350
+    L8   (-8)    1.2760       0.4000  0.1358   0.2268   0.600
+    L12  (-4)    1.2665       0.4000  0.1346   0.2203   0.750
+    L15  (-1)    1.2508       0.4889  0.1312   0.1360   0.900
 
-It is one argument to change. On a 350M model with 16 layers, the "middle" is around
-layer 10-12, not 16. And if it works, you can then truncate the remaining blocks and
-get a genuinely smaller model.
+**The last layer wins on accuracy, Brier, ECE AND training loss**, and the fitted
+temperature rises monotonically with depth -- meaning the earlier layers are more
+overconfident relative to how often they are right.
+
+How much weight this carries: **n=45** evaluation questions, so the accuracy gap is 4
+questions. What carries it is that four independent indicators agree and the temperature
+trend is monotonic, not the accuracy delta alone. And absolute accuracy is low (0.4889
+against a ~0.470 Prior base-rate baseline) -- this is a 198-example, head-only,
+frozen-backbone probe, so the claim is about *which layer*, not about achievable
+accuracy.
+
+AnyJev measured a **7B** model. The "top blocks are busy turning the answer into tokens"
+mechanism may simply be weaker at 350M.
+
+**So `readout_layer=-1` stays the default.** The knob is still there and worth sweeping
+on YOUR data, but the honest statement is now "we tested it and found nothing better"
+rather than an open question.
+
+Full write-up: `.deep-research/notes/04-layer-sweep-results.md`.
+Reproduce: `python experiments/layer_sweep.py`
+
+One more reason to sweep it yourself: our probe froze the backbone. A LoRA-tuned model
+reshapes the layers, and the optimum could move. Our result rules out the *frozen*
+350M case; it does not rule out a tuned one.
 
 6.10.2 A CLOSED-FORM HEAD BEATS LoRA WHEN YOU HAVE 100-300 LABELS
 

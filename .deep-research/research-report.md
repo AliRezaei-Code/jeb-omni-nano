@@ -471,6 +471,41 @@ and it only transfers if you fit it yourself.**
 
 ---
 
+#### What we measured: the read-out layer sweep
+
+The strongest external claim in this report — that a *middle* layer beats the last for a
+linear head — comes from a single unreplicated source (AnyJev, on a 7B model). We tested
+it rather than passing it on.
+
+Frozen `LiquidAI/LFM2.5-350M` @ `9e6c6ccf`, a fresh `DecisionHead` trained per layer so
+the read-out layer is the only variable, `LocalLLaMA/typed-decisions` /
+`customer_service` against the **soft gold distribution**, split by case, temperature
+fitted on one half of the held-out set and reported on the other:
+
+| layer (from end) | train loss | accuracy | Brier ↓ | ECE ↓ | fitted T |
+|---|---|---|---|---|---|
+| L0 (-16) | 1.2877 | 0.4000 | 0.1360 | 0.2258 | 0.350 |
+| L4 (-12) | 1.2875 | 0.4000 | 0.1360 | 0.2256 | 0.350 |
+| L8 (-8) | 1.2760 | 0.4000 | 0.1358 | 0.2268 | 0.600 |
+| L12 (-4) | 1.2665 | 0.4000 | 0.1346 | 0.2203 | 0.750 |
+| **L15 (-1)** | **1.2508** | **0.4889** | **0.1312** | **0.1360** | **0.900** |
+
+**Claim class: our own measurement. The last layer wins on accuracy, Brier, ECE and
+training loss**, and the fitted temperature rises monotonically with depth, so the earlier
+layers are more overconfident relative to how often they are right.
+
+**Weight: limited, and stated.** n = 45 evaluation questions, so the accuracy gap is four
+questions. What makes it more than one number is that four indicators agree and the
+temperature trend is monotonic. Absolute accuracy is low (0.4889 against a `Prior`
+base-rate baseline near 0.470): this is a 198-example, head-only, frozen-backbone probe
+about *which layer*, not about achievable accuracy.
+
+AnyJev measured a **7B** model; the "top blocks are busy turning the answer into tokens"
+mechanism may be weaker at 350M. **The finding is not replicated at this scale, so
+`readout_layer=-1` remains the default** — and the report's claim is downgraded from
+"middle layers are better" to "tested here, not replicated; sweep it on your own data".
+Full write-up: [`notes/04-layer-sweep-results.md`](notes/04-layer-sweep-results.md).
+
 ### SQ3 — Liquid AI LFM2 / LFM2.5, exactly
 
 **Claim class: hard fact from config files and the technical report.**
@@ -1624,6 +1659,9 @@ performance claim. Liquid's own Q4 llama.cpp numbers (2.9K prefill tok/s on AMD 
   preprocessing conventions match Jev-Omni's and are documented, but nothing was run on
   real media. The LFM2.5-VL-450M recommendation is a *prediction* from published
   benchmarks, not a measurement.
+- **The read-out layer sweep froze the backbone and trained only a head.** It therefore
+  rules out the frozen-350M case, not a LoRA-tuned one; a tuned model reshapes the layers
+  and the optimum could move. One workflow, text-only, n=45 at eval.
 - **`itertools.permutations` over 256 options is 256! permutations.** The option-order
   test is only tractable for ≤6-8 options. Nobody in this ecosystem has published
   permutation results at high cardinality.

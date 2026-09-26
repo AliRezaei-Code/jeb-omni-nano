@@ -176,6 +176,28 @@ LICENSE              MIT for the code; weights inherit the LFM Open License v1.0
 
 ---
 
+## The read-out layer sweep — a negative result
+
+The strongest external claim behind the design (Nokia's AnyJev: a *middle* layer is a
+better feature space for a linear head than the last) is from a single unreplicated
+source. We tested it on real data with real weights:
+
+| layer (from end) | train loss | accuracy | Brier | ECE | fitted T |
+|---|---|---|---|---|---|
+| L0 (-16) | 1.2877 | 0.4000 | 0.1360 | 0.2258 | 0.350 |
+| L4 (-12) | 1.2875 | 0.4000 | 0.1360 | 0.2256 | 0.350 |
+| L8 (-8) | 1.2760 | 0.4000 | 0.1358 | 0.2268 | 0.600 |
+| L12 (-4) | 1.2665 | 0.4000 | 0.1346 | 0.2203 | 0.750 |
+| **L15 (-1)** | **1.2508** | **0.4889** | **0.1312** | **0.1360** | **0.900** |
+
+**The last layer wins on all four indicators.** Frozen backbone, fresh head per layer,
+soft gold distributions, temperature fitted and reported on different halves.
+
+`readout_layer=-1` stays the default. n=45, so read the accuracy delta with care; the
+weight comes from four indicators agreeing plus a monotonic temperature trend.
+Full write-up: `.deep-research/notes/04-layer-sweep-results.md`.
+Reproduce: `python experiments/layer_sweep.py`
+
 ## What is verified, and what is not
 
 **Verified here:** head shape and dtype, bit-exact parity with the Jev-Omni
