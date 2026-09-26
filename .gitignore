@@ -1,0 +1,37 @@
+# Deep research artifacts (large, regenerable)
+.deep-research/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+env/
+
+# Training / inference outputs
+runs/
+outputs/
+checkpoints/
+wandb/
+*.log
+!requirements*.txt
+
+# Model artifacts — never commit weights
+*.safetensors
+*.gguf
+*.bin
+*.pt
+*.onnx
+head.pt
+
+# Data caches
+.cache/
+data/raw/
+data/processed/
+
+# OS / editors
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
