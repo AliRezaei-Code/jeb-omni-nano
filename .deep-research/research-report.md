@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Sources analyzed** | **226** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
+| **Sources analyzed** | **230** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,200 lines |
 
@@ -666,6 +666,57 @@ launch. **I could not verify either identifier: the arXiv API returned an empty 
 2503.23303.** It is recorded as an unverified claim and supports nothing. The same author
 shipped Laya, which is unambiguously a real contribution and weakens — though does not
 dissolve — the self-interest in the priority claim.
+
+#### The ecosystem census: 693 projects, and what they are not
+
+The [Awesome Jev radar](https://raw.githubusercontent.com/logicrw/awesome-jev-projects/main/README.md)
+holds **693 curated projects across 18 categories**, each with a standardised provenance
+block naming *where* the decision happens. It is the largest census of this field and
+the most useful single artefact found across three research passes.
+
+**The category distribution is the finding.** Grouping the 18 categories:
+
+| Grouping | n | share |
+|---|---:|---:|
+| **Orchestration, plumbing, safety, evaluation** (frameworks, routing, MCP, guardrails, context GC, CLI, eval) | **387** | **56%** |
+| Demos, verticals and toys (domain tools, games, creative, voice) | 145 | 21% |
+| **Classification-class work** (classification, code navigation, decision tools) | **41** | **6%** |
+| — of which filed under `Classification` specifically | **2** | **0.3%** |
+
+**Only 2 of 693 projects are filed under Classification.** A field whose entire pitch is
+"a small model that classifies" has spent its first weeks overwhelmingly building
+**plumbing around classifiers** — adapters, routers, MCP servers, guardrails — not
+classifiers. That is the strongest corroboration available of the practitioner consensus
+on the largest thread (*"smarter move if you have an eval set is to just train a
+classifier and call it a day"*), and it is also the honest boundary on this project: a
+350M decision model is 6% of the field, and **the 56% is the integration work that
+decides whether it is usable at all.**
+
+#### The census cannot substantiate the field's central claim
+
+Every entry carries a provenance block, and two caveats recur **verbatim** across it.
+Counted exactly over the raw README:
+
+- **376 of 693 entries (54%)** are marked: *"performance and cost benefits have not been
+  independently verified."*
+- **352 of 693 entries (51%)** say: *"consult the source for the exact decision policy"* —
+  the reviewer could not confirm **what decision the project makes**.
+
+**In a category whose entire value proposition is latency, the largest census of it
+cannot substantiate the latency claim in the majority of its own entries.** That is not a
+criticism of the directory — it is being *more* honest than the field. It is a
+measurement of the field: **"20-200x faster" has essentially not been independently
+reproduced by independent people in six weeks.**
+
+The directory's discipline is worth borrowing outright. It notes per project: *"arbitrary
+task generalization is not claimed"*; *"Author demo numbers were not retested here"*;
+*"supports persistent sessions and UI readback, which does not by itself prove database
+persistence"*; *"GitHub SPDX is empty; the LICENSE file is MIT"*. Licences are recorded
+per entry and **"Not declared"** is used honestly.
+
+**The genuinely independent performance evidence in the entire corpus is one number:**
+Vercel Labs' `json-render` at 3.21 s → 0.88 s. Everything else is either self-reported by
+the project author or explicitly unverified by the directory.
 
 
 ### SQ3 — Liquid AI LFM2 / LFM2.5, exactly
@@ -1791,6 +1842,34 @@ its own per-capability sample sizes, its noise caveat, its baseline deltas and i
 calibration counts is worth more than a marketing latency chart — a general rule, not a
 comment about these two projects.
 
+### Contradiction 10 — Four latency measurements, none of them comparable
+
+This report has now collected four independent latency figures for the same family of
+system, and **they disagree by more than an order of magnitude**:
+
+| Source | Figure | Shape / conditions |
+|---|---:|---|
+| Jev-Omni's own card | **83 ms** | in-process, H200, ~2k-token text, one question |
+| Awesome Jev radar | **50-100 ms** | none stated: no version, no question count, network time undeclared |
+| Ollaya | **236-276 ms** | hosted API, median, five questions, includes network |
+| `typed-decision-bench` | **716 ms p50 / 779 ms p95** | H200 NVL, 275 capabilities, includes HTTP latency |
+
+The radar's claim is **~7x faster** than the controlled benchmark's, and the spread from
+fastest to slowest is **~14x**. The request shapes differ so much that these may not be
+the same operation: one question versus five, in-process versus hosted, unknown context
+length.
+
+**The honest statement is a range with the shape attached to each end, and no
+cross-source latency ranking.** This report's Latency table lines these figures up
+vertically, which invites exactly the comparison none of them supports. That table is a
+record of *what each party measured on its own hardware* and must not be read as a
+ranking. Takeaway 23 already forbids quoting a latency win without the accuracy number;
+this extends it: **do not quote a latency number at all without its request shape.**
+
+What survives is the *direction*, which four sources agree on: local small-model decision
+paths are far cheaper and lower-latency than a hosted frontier round trip. Nobody in this
+corpus disputes that. **The specific multiples do not survive.**
+
 ---
 
 ## Comparisons
@@ -1968,6 +2047,20 @@ labelled by source. Every experiment is reproducible from `experiments/`.
     orders unguarded; the drone project keeps classical control and uses Jev one level
     up. The 287-project survey's own summary is the pattern: big model → Jev → code →
     Jev → tool → Jev → big model.
+29. **This field is 56% plumbing and 6% classification.** Of 693 catalogued projects, 387
+    are orchestration, routing, MCP, guardrails, context GC and evaluation; **2 are filed
+    under Classification.** The interesting work is integration, and that is also the
+    binding constraint on any new small model.
+30. **The speed claims are unverified, and the census says so.** 376 of 693 entries carry
+    *"performance and cost benefits have not been independently verified"*; 352 say the
+    reviewer could not even confirm what decision the project makes. **The one
+    independently reproduced performance number in the whole corpus is Vercel Labs'
+    `json-render` at 3.21 s -> 0.88 s.** When you benchmark your own model, the directory's
+    provenance-block discipline is the standard to copy.
+31. **Never quote a latency number without its request shape.** Four sources measure
+    Jev-class latency between **50 ms and 716 ms** — a 14x spread — and the request shapes
+    differ so much they may not be the same operation. The *direction* is agreed by
+    everyone; the multiples are not.
 
 
 ## Limitations & Gaps
@@ -1996,6 +2089,10 @@ labelled by source. Every experiment is reproducible from `experiments/`.
   and Hacker News, not on Q&A sites.
 - **One Redlib instance was used** (`safereddit.com`, SFW-only). A non-SFW instance may
   surface more, and the 287-project directory from row 216 was not itself crawled.
+- **The 693 projects were not individually read.** The census is evidence about the
+  *field*, not about any one project. The `llms.txt` / `llms-full.txt` files the
+  directory publishes for agents may carry a cleaner per-project dataset than the README
+  and are the obvious next fetch.
 - **The prior-art claim could not be verified.** The arXiv API returned an empty feed for
   2503.23303. Recorded as an unverified claim; it supports nothing in this report.
 - **The new community sources are Tier C except where noted** and carry no weight in any
@@ -2078,7 +2175,7 @@ acceptable:
 
 ## Sources
 
-All 226 sources, with the same numbering as `sources-ledger.md`. Full key claims per
+All 230 sources, with the same numbering as `sources-ledger.md`. Full key claims per
 source are in the ledger; per-source deep notes for the load-bearing ones are in
 `notes/`.
 
@@ -2316,3 +2413,10 @@ Algolia API was found to work; see Methodology)
 224. [logicrw/awesome-jev-projects](https://github.com/logicrw/awesome-jev-projects) — the 287-project directory (Tier A, repo, rel 3)
 225. [r/homeassistant: Jev for smart-home control](https://www.reddit.com/r/homeassistant/comments/1wjmqj0/) — 58 upvotes. The bounded-control-plane use case (Tier C, forum, rel 2)
 226. [r/hermesagent: Jev-style layer on a 24/7 trader](https://www.reddit.com/r/accelerate/comments/1wn1gck/) — 278 upvotes. **Contradicts row 215's outcome the same week.** Neither anecdote is evidence (Tier C, forum, rel 2)
+
+**K. Ecosystem census**
+
+227. [Awesome Jev — System-1 Agent Architecture Radar](https://raw.githubusercontent.com/logicrw/awesome-jev-projects/main/README.md) — logicrw, 2026-09-26. 693 curated projects in 18 categories, each with a standardised provenance block. 56% orchestration/plumbing/safety/eval, 6% classification-class, **2 of 693 under Classification** (Tier B, repo, rel 5)
+228. [Awesome Jev — caveat counts](https://raw.githubusercontent.com/logicrw/awesome-jev-projects/main/README.md) — same source, counted: **376 of 693 entries** marked "performance and cost benefits have not been independently verified"; **352 of 693** say "consult the source for the exact decision policy". Exact `grep -c` over the raw README (Tier B, repo, rel 5)
+229. [Awesome Jev — architecture comparison table](https://raw.githubusercontent.com/logicrw/awesome-jev-projects/main/README.md) — same source: the radar claims **"Sub-100ms Latency: 50-100ms"** for TypeSafe Jev, ~7x faster than typed-decision-bench's 716 ms p50. No version, question count or network condition stated (Tier C, repo, rel 4)
+230. [Awesome Jev live radar](https://logicrw.github.io/awesome-jev-projects/en/) — the filterable category view, plus `llms.txt` / `llms-full.txt` agent-skill files that were **not fetched in this pass** (Tier B, docs, rel 3)

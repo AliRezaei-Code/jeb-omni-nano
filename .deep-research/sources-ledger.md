@@ -303,6 +303,16 @@ agents. This is the layer the previous two passes recorded as uncovered.
 | 225 | https://www.reddit.com/r/homeassistant/comments/1wjmqj0/ | Jev for smart-home control | u/ntech2 | 2026-09 | C | forum | 2 | 58 upvotes, 67 comments. A control-plane use case: bounded device selection from home state, with the author noting the permissions requirement. The clearest statement of the *"answer when it is sure, escalate when it is not"* production framing outside Blink's README |
 | 226 | https://www.reddit.com/r/accelerate/comments/1wn1gck/ | Jev-style layer on a 24/7 AI trader | u/artguerilla | 2026-09 | C | forum | 2 | 278 upvotes, 82 comments. The paired follow-up to row 215, and **directly contradicts row 215's outcome**: "So far it actually looks promising. Which probably means I've misunderstood something and will discover it in 6 hours." Two retail trading experiments on the same model class reached opposite conclusions in the same week — recorded because a single anecdote in either direction is not evidence |
 
+
+## K. Ecosystem census
+
+| # | URL | Title | Publisher/Author | Date | Tier | Type | Rel | Key claims extracted |
+|---|---|---|---|---|---|---|---|---|
+| 227 | https://raw.githubusercontent.com/logicrw/awesome-jev-projects/main/README.md | Awesome Jev — System-1 Agent Architecture Radar | logicrw | 2026-09-26 | B | repo | 5 | **The largest census of the field, and the most useful single artefact found in three passes.** **693 curated projects across 18 categories**, each with a standardised provenance block naming *where* the decision happens and *what the project offers*. Category census: SDK & Decision Frameworks **120**, Domain Tools 69, CLI & Pipelines 62, **Security & Guardrails 58**, Model Routing 55, High-Frequency/Games 52, Browser & OS Action 50, Data & Search 44, MCP 43, Context GC 40, Evaluation & Observability 29, Decision Tools 25, Creative Tools 20, Code Navigation 14, SDK Integrations 6, Voice 4, **Classification 2**. **56% of the field is orchestration/plumbing/safety/evaluation; 6% is classification-class work; only 2 of 693 are filed under Classification** |
+| 228 | same URL, provenance-block caveat counts | (same source, counted) | logicrw | 2026-09-26 | B | repo | 5 | **376 of 693 entries (54%) carry the verbatim caveat "performance and cost benefits have not been independently verified"; 352 of 693 (51%) say "consult the source for the exact decision policy", meaning the reviewer could not confirm what decision the project makes.** Exact `grep -c` counts over the raw README. In a category whose entire pitch is latency, the largest census cannot substantiate the latency claim in the majority of its own entries |
+| 229 | same URL, architecture comparison table | (same source) | logicrw | 2026-09-26 | C | repo | 4 | The directory's own System-1 vs System-2 table claims **"Sub-100ms Latency: Delivers decisions in 50-100ms"** for TypeSafe Jev, against **$1.00-$15.00/1M tokens** for reasoning LLMs. **This contradicts typed-decision-bench's 716.4 ms p50 for jev-1.13.0 by ~7x.** The table names no version, no request shape, no question count, and does not say whether network time is included |
+| 230 | https://logicrw.github.io/awesome-jev-projects/en/ | Awesome Jev — live searchable radar | logicrw | 2026-09-26 | B | docs | 3 | The filterable category view behind the census. Also publishes `llms.txt` / `llms-full.txt` agent-skill files and an installable skill (`npx skills add logicrw/awesome-jev-projects`) — **not fetched in this pass** |
+
 ---
 
 ## Rejection log (fetched, then excluded — recorded for auditability)
@@ -340,7 +350,7 @@ agents. This is the layer the previous two passes recorded as uncovered.
 | F. Benchmarks, encoders, toolchain | 29 |
 | G. Training datasets | 3 |
 | H. Late-pass finds | 51 |
-| **Total ledger rows** | **226 unique sources** |
+| **Total ledger rows** | **230 unique sources** |
 | Rejection log | 15 |
 
 **On the 200-source threshold.** 146 fully-extracted rows plus 9 logged rejections is 155
