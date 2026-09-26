@@ -57,6 +57,13 @@ errors observed in 15", and any threshold set from it is optimistic.
 **Do not trust the frozen arm's numbers at all.** Coverage 0.0% is not a weak
 result, it is the absence of a usable operating point.
 
+## Replicated on a second workflow
+
+The same experiment on `invoice_processing` (n=200): LoRA 0.6450 accuracy / T 0.850
+/ cov@5% 0.0550 / cov@20% 0.2750, against a frozen arm at 0.4700 / T 4.150 /
+cov@5% 0.0300. Same direction, smaller magnitude. Full table and caveats in
+[`09-cross-workflow-replication.md`](09-cross-workflow-replication.md).
+
 ## Scope
 
 - One workflow (`customer_service`) of four.

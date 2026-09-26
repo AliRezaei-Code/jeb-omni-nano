@@ -2191,7 +2191,46 @@ fp32. Liquid's own Nanos guidance is that multimodal encoders and projectors are
 much smaller than the LLM and have an outsized effect on quality, so they are
 usually kept at bf16 or q8.
 
-12.3 A DECISION POLICY, WRITTEN OUT
+12.3 A DECISION POLICY, WRITTEN OUT -- AND MEASURED
+---------------------------------------------------------
+Most guides stop at "pick a threshold". We ran the model, so here is what its
+curve actually says. From our saved per-question outcomes, n=300 eval
+questions, LoRA arm, exact Clopper-Pearson intervals:
+
+    coverage   accuracy   95% CI          frozen arm, same eval
+        2%       1.000   [0.607, 1.000]      0.667
+        5%       1.000   [0.819, 1.000]      0.600
+       10%       0.933   [0.805, 0.988]      0.500
+       20%       0.817   [0.715, 0.894]      0.467
+       30%       0.811   [0.730, 0.876]      0.389
+      100%       0.563   [0.514, 0.611]      0.323
+
+    automatable coverage at an error budget:
+      <= 2%  ->   8.0%      <= 5%  ->   9.7%      <= 10% ->  11.0%
+      <=20%  ->  33.7%      <=30%  ->  50.0%
+
+The frozen arm has **coverage 0.0% at every budget from 2% to 30%**. Its single
+highest-confidence prediction was WRONG. There is no threshold that makes it
+usable, which is a stronger statement than "it scores worse".
+
+SO WRITE THREE BANDS, not one threshold:
+
+    top ~8-10% of decisions    accuracy 0.93-1.00  -> act automatically
+    next ~20-25%               accuracy 0.81-0.93  -> act, log, sample for audit
+    bottom ~70%                accuracy ~0.50      -> escalate to a person
+                                                    or a bigger model
+
+**DO NOT PROMISE "100% ACCURATE".** The 5%-coverage point is 15 questions with
+zero observed errors; the 95% lower bound is 0.819. The honest phrasing is "no
+errors observed in 15", and any threshold set from it is optimistic. Quote the
+interval, not the point estimate.
+
+**THESE BANDS ARE NOT A RECOMMENDATION FOR YOUR DATA.** They come from one
+workflow, 360 training questions and 3 CPU epochs. A model trained on 10k
+examples moves every row. Re-run `python experiments/risk_coverage.py <run.json>`
+against your own held-out set and set thresholds from *that* curve.
+
+
 -----------------------------------
 The probabilities are for routing. Say so in your docs and your UI.
 
