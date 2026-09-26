@@ -76,7 +76,7 @@ def gold_tensor(rows):
 
 
 def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr,
-            head_lr, device, seed, label):
+            head_lr, device, seed, label, loss_kind="soft_ce", brier_w=1.0):
     torch.manual_seed(seed)
     for p in backbone.parameters():
         p.requires_grad_(use_lora)
@@ -114,7 +114,18 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
             h = _last_hidden(fwd, ids, mask)
             logits = head(h, counts)[:, : g.shape[1]]
             logp = torch.log_softmax(logits, dim=-1)
-            loss = -(g * logp).sum(-1).mean()
+            if loss_kind == "soft_ce":
+                # strictly proper on the option distribution: the current recipe
+                loss = -(g * logp).sum(-1).mean()
+            elif loss_kind == "hard_ce":
+                # kyr0's literal reading: plain CE on the argmax label
+                loss = -logp.gather(-1, g.argmax(-1, keepdim=True)).squeeze(-1).mean()
+            elif loss_kind == "ce_brier":
+                # "CE with an eye on Brier": CE plus the Brier score as a term
+                b = ((logp.exp() - g) ** 2).sum(-1).mean()
+                loss = -(g * logp).sum(-1).mean() + brier_w * b
+            else:
+                raise ValueError(f"unknown loss_kind {loss_kind!r}")
             loss.backward()
             torch.nn.utils.clip_grad_norm_(
                 [p for p in model.parameters() if p.requires_grad] if use_lora
@@ -186,7 +197,7 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
 
     # Dump per-row outcomes so coverage can be recomputed without retraining.
     return {
-        "arm": label, "lora": use_lora, "temperature": round(float(t), 4),
+        "arm": label, "lora": use_lora, "loss": loss_kind,
         "n_eval": int(ev_lg.shape[0]),
         "accuracy": round(acc, 4),
         "brier": round(brier_score(p, labels), 4),
@@ -218,6 +229,10 @@ def main() -> int:
     ap.add_argument("--out", default="runs/lora-ablation")
     ap.add_argument("--only", choices=["A", "B"], default=None,
                     help="run a single arm; A=frozen+head, B=LoRA+head")
+    ap.add_argument("--loss", default="soft_ce",
+                    choices=["soft_ce", "hard_ce", "ce_brier"],
+                    help="training objective. kyr0 (typed-decision-bench) claims "
+                         "RLCD is overrated and CE+Brier beats it; this tests that.")
     args = ap.parse_args()
 
     from transformers import AutoTokenizer
@@ -262,7 +277,8 @@ def main() -> int:
         backbone = resolve_backbone(model.model)
         r = run_arm(backbone, train_cases, eval_rows, layer_sweep.TOKENIZER,
                     use_lora=use_lora, epochs=args.epochs, lr=lr, head_lr=hlr,
-                    device="cpu", seed=args.seed, label=label)
+                    device="cpu", seed=args.seed, label=label,
+                    loss_kind=args.loss)
         print(f"    -> acc {r['accuracy']:.4f}  brier {r['brier']:.4f}  "
               f"ece {r['ece']:.4f}  cov@5% {r['coverage_at_5pct_error']:.4f}  "
               f"T {r['temperature']:.3f}  ({r['seconds']}s)")
