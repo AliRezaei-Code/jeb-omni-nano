@@ -198,7 +198,7 @@ weight comes from four indicators agreeing plus a monotonic temperature trend.
 Full write-up: `.deep-research/notes/04-layer-sweep-results.md`.
 Reproduce: `python experiments/layer_sweep.py`
 
-## Does LoRA actually help? Measured: +31 accuracy points
+## Does LoRA actually help? Measured: +24 accuracy points, and 0% coverage without it
 
 The project's central assumption -- that you must fine-tune the backbone, not just fit
 a head -- was inherited from prior work and never tested. Same data, splits and eval;
