@@ -1,5 +1,6 @@
-# Deep research artifacts (large, regenerable)
-.deep-research/
+# Deep research: the report and ledger ARE committed, because GUIDE.txt cites
+# them and this is a public repo. Only raw scratch notes are ignored.
+.deep-research/notes/*
 
 # Python
 __pycache__/
