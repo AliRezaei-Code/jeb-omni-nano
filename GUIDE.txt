@@ -1049,6 +1049,7 @@ it, read `rlcd/engine.py` and its `fork_cache` function first; the subtlety is
 that you must copy the *convolution* state as well as the attention KV, and that
 generic `batch_repeat_interleave` does not handle LFM2's convolution layers.
 
+
 6.9 ADVANCED CALIBRATION -- WHAT THE PUBLISHED CALIBRATORS ACTUALLY DO
 ---------------------------------------------------------------------
 This section exists because a later pass over the published calibrators changed
@@ -1149,6 +1150,109 @@ underconfident model. Ours searches [0.25, 5.0].
 Fixing that moved hard-tier ECE from **0.298 to 0.118 (-60.4%)**. The largest
 calibration win in that project's history came from *loading* the calibrator
 correctly, not from fitting it better. Check yours loads.
+
+6.10 FOUR FINDINGS THAT CHANGE THE DESIGN (from a later pass)
+------------------------------------------------------------
+These arrived after the core design was written and each one should change what you
+do. They are the reason this section exists.
+
+6.10.1 DO NOT READ THE LAST LAYER. READ A MIDDLE ONE.
+
+Nokia's AnyJev (github.com/nokia-applied-research/AnyJev, with Tencent Hunyuan,
+Apache-2.0) reports:
+
+    "Cutting Qwen2.5-7B from 28 blocks to 18 left accuracy slightly HIGHER and
+     calibration better, and was faster: a middle block is a better feature space
+     for a linear head than the last one, where the remaining blocks are busy
+     turning the answer into tokens."
+
+    "Depth is usually a gain, not a trade."
+
+The intuition is right and it generalises. The last layers of a causal LM are
+specialised for producing the next token. A linear readout wants a layer that
+still represents *meaning*, not one that has already collapsed meaning into
+token identity. And the truncated model is smaller, which is what you wanted anyway.
+
+**Our implementation reads the last layer**, because that is what Jev-Omni does and
+we were porting Jev-Omni. Treat that as the first thing to sweep:
+
+    for layer in [-1, -2, -3, -5, -8, -12]:
+        measure accuracy, ECE and Brier at that layer, with the head refit
+
+It is one argument to change. On a 350M model with 16 layers, the "middle" is around
+layer 10-12, not 16. And if it works, you can then truncate the remaining blocks and
+get a genuinely smaller model.
+
+6.10.2 A CLOSED-FORM HEAD BEATS LoRA WHEN YOU HAVE 100-300 LABELS
+
+AnyJev's L2 level fits a head per question in closed form, in seconds, with **no
+gradients and the model's weights untouched**. Reported on BANKING77 20-way:
+
+    labels needed          none    100-500
+    answer flips on reorder 0.230    0.073    0.077
+    accuracy                0.747    0.803    0.807
+    calibration error       0.240    0.184    0.095
+    AUTO-DECIDABLE at <=5% error   7.7%    46.3%    52.0%
+
+Read the last row twice. Accuracy moves six points, but the share of traffic you can
+safely automate goes **7.7% -> 52.0%**. That is the entire argument for this class
+of model in one table: with raw logits a "0.9" is not trustworthy enough to act on,
+so everything goes to a human; once the probability means something, you can set a
+threshold.
+
+**Practical consequence: do a closed-form fit BEFORE you reach for LoRA.** It is
+minutes of work, it needs almost no data, and it gives you a baseline that tells you
+whether the backbone's features are usable at all. If a linear head on frozen features
+cannot separate your classes, LoRA will not rescue it.
+
+6.10.3 ORDER-FLIP HAS A ZERO-LABEL FIX
+
+AnyJev's L0 level changes **only the readout** -- no labels, no training -- and moves
+the order-flip rate from 0.230 to 0.073 while *also* raising accuracy 0.747 -> 0.803.
+
+This is the third independent confirmation that the readout geometry matters (after
+the option-name paper and Laya's Banking77 ceiling). If your small model is
+order-sensitive, try fixing the readout before you fine-tune anything.
+
+6.10.4 THE CURRENT TOP OF THE LEADERBOARD IS CALIBRATION-BOUND
+
+Mapika's `decider` (Apache-2.0) is the most-documented family in this ecosystem and
+ships **0.8B, 2B, 2B-vision, 4B and 35B-A3B** checkpoints. On JevBench (read
+2026-09-21, 36 entries):
+
+    system                        score  intelligence  calibration  speed  cost
+    Jev 1.13.0 (TypeSafe AI, #1)   75.4       90.4         82.7       83.3  52.0
+    SemIf (Qwen3.5-4B, #2)        74.7       85.9         72.6       83.7  59.5
+    decider-35b-a3b (#10)          68.9       86.3         71.5       80.8  45.3
+    decider-2b (#21)               64.6       73.8         46.6       83.2  61.0
+
+Their own note: *"Our 35B is pulled down by cost, the 2B by calibration."* The 2B has
+73.8 intelligence -- respectable -- and 46.6 calibration, which is what sinks it.
+
+And on the Decision Index, `decider-35b-a3b` (NVFP4) is **#4 of 32 and the
+highest-scoring trained model**; the two entries above it are zero-training wrappers.
+
+**Calibration, not accuracy, is the binding constraint at scale.** That is the single
+most useful thing to take from this section.
+
+Their release discipline is also worth copying: `decider-2b v11` and `decider-4b v2.1`
+**"Neither passed its pre-registered release rules; the model cards list every
+failure."** They shipped models that failed their own gate, and said so.
+
+6.10.5 AND A CAUTION ABOUT THE HYPE
+
+`yibie/awesome-jev` indexes roughly 475 public projects using this pattern. Its own
+warning is worth repeating:
+
+    "Treat same-day bulk submissions with particular care. Several repositories
+     published together by one author, sharing a scaffold and a thin commit history,
+     can satisfy every inclusion rule and still be unproven. Volume is not evidence
+     of quality."
+
+The same list tags its entries by coding agent -- Multi (15), Pi (12), Claude Code
+(9), Codex (6), DeepSeek Harness (3), Cline (1) -- which tells you most of the
+ecosystem is *agent tooling*, not model research. Read the model papers, not the
+repo count.
 
 ================================================================================
 PART 7 -- THE CODE THAT EXISTS IN THIS REPOSITORY

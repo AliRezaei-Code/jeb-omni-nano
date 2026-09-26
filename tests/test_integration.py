@@ -109,6 +109,33 @@ def main() -> int:
     print(f"\n  single-question latency: {ms:.0f} ms "
           f"(fp32 CPU, untrained head, no causal_conv1d kernel installed)")
 
+
+    # Readout-layer sweep. Nokia's AnyJev reports a middle layer beats the last one
+    # for a linear head; this proves the option is wired up and actually reads a
+    # different layer on real weights.
+    print("\n  readout-layer sweep (Nokia/AnyJev finding: try a middle layer):")
+    seen = {}
+    for layer in (-1, -8, -12):
+        m2 = JebNanoModel(BACKBONE, revision=REVISION, device="cpu",
+                          dtype=torch.float32, readout_layer=layer)
+        check(f"readout_layer={layer} hooks a real decoder layer",
+              m2._readout_module is m2._find_text_backbone().layers[layer])
+        check(f"readout_layer={layer} registered its hook",
+              len(m2._readout_module._forward_hooks) == 1)
+        a2 = m2.decide("The server is down for everyone.",
+                       Question(key="u", instructions="Urgent?", type="noul"))
+        check(f"readout_layer={layer} returns a valid distribution",
+              abs(sum(a2.probabilities.values()) - 1.0) < 1e-5)
+        seen[layer] = tuple(round(v, 6) for v in a2.probabilities.values())
+    check("different readout layers give different activations",
+          len(set(seen.values())) == len(seen), str(seen))
+    try:
+        JebNanoModel(BACKBONE, revision=REVISION, device="cpu",
+                     dtype=torch.float32, readout_layer=99)
+        check("out-of-range readout_layer rejected", False)
+    except ValueError:
+        check("out-of-range readout_layer rejected", True)
+
     print("\n  NOTE: the head is randomly initialised here, so these probabilities are")
     print("  meaningless as predictions. This test proves the wiring, the shapes, the")
     print("  determinism and the cost -- not the accuracy. See GUIDE.txt for training.")

@@ -141,6 +141,7 @@ class JebNanoModel(nn.Module):
         max_options: int = 256,
         temperatures: TemperatureFit | None = None,
         revision: str | None = None,
+        readout_layer: int = -1,
         dtype: torch.dtype = torch.bfloat16,
         device: str | Literal["mps", "cuda", "cpu"] = "cpu",
         trust_remote_code: bool = False,
@@ -185,6 +186,8 @@ class JebNanoModel(nn.Module):
         self.head = DecisionHead(self.hidden_size, max_options=max_options).to(device).eval()
 
         self._capture: dict[str, torch.Tensor] = {}
+        self.readout_layer = readout_layer
+        self._readout_module = None
         self._install_hook()
 
     # ---------------------------------------------------------------- internals
@@ -209,13 +212,53 @@ class JebNanoModel(nn.Module):
         )
 
     def _install_hook(self) -> None:
+        """Capture the last-token hidden state at ``readout_layer``.
+
+        ``readout_layer=-1`` (the default) reads the final layer, which is what
+        Jev-Omni does and what this project was originally built to reproduce.
+
+        **Sweep this.** Nokia's AnyJev reports that truncating Qwen2.5-7B from 28
+        blocks to 18 left accuracy *higher* and calibration better, and was faster:
+        "a middle block is a better feature space for a linear head than the last
+        one, where the remaining blocks are busy turning the answer into tokens."
+
+        The last layers of a causal LM specialise for emitting the next token; a
+        linear readout wants a layer that still represents meaning. On a 16-layer
+        LFM2.5-350M the middle is around layer 10-12, not 16. Try
+        ``readout_layer in (-1, -2, -3, -5, -8, -12)`` and keep whichever wins on
+        your own accuracy + ECE + Brier. If an early layer wins, the layers above it
+        can be truncated away and the model gets genuinely smaller.
+        """
         target = self._find_text_backbone()
+        layers = getattr(target, "layers", None)
+        if layers is None:
+            raise RuntimeError(f"{self.backbone_name} exposes no `.layers` to hook")
+        idx = self.readout_layer
+        if not -len(layers) <= idx < len(layers):
+            raise ValueError(
+                f"readout_layer {idx} is out of range for a {len(layers)}-layer backbone"
+            )
+        self._readout_module = layers[idx]
 
         def hook(_m, _args, out):
-            hidden = out.last_hidden_state if hasattr(out, "last_hidden_state") else out[0]
+            # Three possible layer-output shapes, all seen in the wild:
+            #   - a plain Tensor (LFM2DecoderLayer returns exactly this)
+            #   - a tuple whose first element is the hidden state
+            #   - a ModelOutput with `.last_hidden_state`
+            # Indexing `out[0]` on a Tensor silently takes the BATCH row, which is
+            # how you end up feeding the head a slice of the wrong width.
+            if isinstance(out, torch.Tensor):
+                hidden = out
+            elif hasattr(out, "last_hidden_state"):
+                hidden = out.last_hidden_state
+            elif isinstance(out, (tuple, list)):
+                hidden = out[0]
+            else:
+                raise RuntimeError(
+                    f"unexpected layer output type {type(out)}; cannot read a hidden state"
+                )
             self._capture["hidden"] = hidden[:, -1].float()
-
-        target.register_forward_hook(hook)
+        self._readout_module.register_forward_hook(hook)
 
     # ------------------------------------------------------------------ forward
     def _encode(self, text: str) -> torch.Tensor:
