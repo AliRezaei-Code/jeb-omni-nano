@@ -114,45 +114,132 @@ class DecisionHead(nn.Module):
         )
 
 
+#: Default shrinkage constant for grouped temperature fits, k = 100.
+#: A group's weight toward its own fitted value is ``n / (n + k)``, so a group with
+#: 100 rows gets half weight and shrinks halfway to the global temperature. Verified
+#: arithmetically against the published ``Jev-Style-0.8B-Decision-v3`` calibrator,
+#: whose 20 groups all satisfy ``weight == n / (n + 100)`` exactly.
+SHRINKAGE_K = 100.0
+
+
+def option_bucket(n_options: int) -> str:
+    """Bucket an option count. Mirrors the published convention.
+
+    ``"2", "3-5", "6-10", "11-20", "21+"`` -- the same buckets used by
+    ``Jev-Style-0.8B-Decision-v3``, so the fitted temperatures are comparable.
+    """
+    if n_options <= 2:
+        return "2"
+    if n_options <= 5:
+        return "3-5"
+    if n_options <= 10:
+        return "6-10"
+    if n_options <= 20:
+        return "11-20"
+    return "21+"
+
+
+def shrink_temperature(t_raw: float, t_global: float, n: int, k: float = SHRINKAGE_K) -> float:
+    """Shrink a group's raw temperature toward the global one, in LOG space.
+
+    ``w = n / (n + k)``; ``T = exp(w * ln T_raw + (1 - w) * ln T_global)``.
+
+    The log-space (geometric) blend is not a stylistic choice. Reproducing the
+    published v3 calibrator, the geometric blend matches its stored values to ~5
+    decimal places while an arithmetic blend is off by up to 8% on the same groups.
+
+    Why shrink at all: a group fitted on 15 rows is a textbook overfit. In the
+    published calibrator one such group wanted T = 5.0 and was saved by the clamp
+    alone. Shrinkage is the principled version of that rescue, and it degrades
+    gracefully to the global value as ``n`` goes to zero.
+    """
+    w = n / (n + k) if (n + k) > 0 else 0.0
+    if w <= 0.0:
+        return float(t_global)
+    if w >= 1.0:
+        return float(t_raw)
+    import math
+    return float(math.exp(w * math.log(max(t_raw, 1e-9))
+                          + (1.0 - w) * math.log(max(t_global, 1e-9))))
+
+
 @dataclass
 class TemperatureFit:
-    """Per-question-type temperatures, fitted on a held-out calibration split.
+    """Temperatures fitted on a held-out calibration split, with shrinkage.
 
-    Why per-type and not one scalar: the three typed question primitives (noul /
-    choice / score) produce very differently-shaped logit distributions, and every
-    open reimplementation that reports calibration ships separate values. Kev ships
-    one global T; Jebadiah ships three (choice 1.12, noul 1.33, score 1.20). Values
-    above 1.0 soften (model is overconfident); below 1.0 sharpen.
+    Two axes, because the evidence says both matter:
 
-    ``T`` is applied to logits *before* the softmax: ``p = softmax(z / T)``. This is
-    the classical temperature-scaling transform and is the correct knob for
-    post-hoc calibration because it cannot change the argmax, only the distribution
-    shape around it.
+    *BY QUESTION TYPE.* noul / choice / score produce differently-shaped logit
+    distributions. Jebadiah ships three (1.12 / 1.33 / 1.20).
+
+    *BY OPTION COUNT.* This one is easy to miss and matters more. A published 151M
+    calibrator fitted temperature per cardinality and found a **3.3x spread** --
+    k=2 -> 5.01, k=6 -> 2.39, k=9 -> 1.67, k=25 -> 1.51. A single global T is 3.3x
+    too wrong at the ends of the range.
+
+    Any group with fewer than ~100 rows is shrunk toward ``global`` in log space,
+    because small-group fits are noise.
+
+    ``T`` is applied to logits *before* the softmax: ``p = softmax(z / T)``. This
+    cannot change the argmax, only the shape around it -- which is what makes it a
+    safe post-hoc knob.
+
+    ``T`` may be **below** 1.0. A published 0.8B calibrator ships a global T of
+    0.880, meaning that model was *under*confident and calibration sharpened it.
+    Do not assume T >= 1.
     """
 
-    choice: float = 1.0
-    noul: float = 1.0
-    score: float = 1.0
+    global_: float = 1.0
+    by_type: dict[str, float] = field(default_factory=dict)
+    by_bucket: dict[str, float] = field(default_factory=dict)
+    #: Raw (unshrunk) per-bucket fits, kept so a larger calibration set can be
+    #: re-shrunk later without refitting.
+    bucket_raw: dict[str, float] = field(default_factory=dict)
+    bucket_n: dict[str, int] = field(default_factory=dict)
+    n_rows: int = 0
     fitted_on: str | None = field(default=None, compare=False)
 
-    def get(self, question_type: str) -> float:
-        try:
-            return float(getattr(self, question_type))
-        except AttributeError as exc:  # pragma: no cover - programming error
+    def get(self, question_type: str = "choice", n_options: int | None = None) -> float:
+        """Look up T: per-bucket first, then per-type, then global.
+
+        Precedence matters. A bucket is the most specific and most data-hungry, so
+        it wins when present; a type fit is the fallback when a bucket has no rows.
+        """
+        if question_type not in ("choice", "noul", "score"):
             raise ValueError(
                 f"unknown question type {question_type!r}; expected choice, noul or score"
-            ) from exc
+            )
+        if n_options is not None:
+            t = self.by_bucket.get(option_bucket(n_options))
+            if t is not None:
+                return float(t)
+        t = self.by_type.get(question_type)
+        if t is not None:
+            return float(t)
+        return float(self.global_)
 
     def to_dict(self) -> dict:
-        return {"choice": self.choice, "noul": self.noul, "score": self.score,
-                "fitted_on": self.fitted_on}
+        return {
+            "global": self.global_,
+            "by_type": self.by_type,
+            "by_bucket": self.by_bucket,
+            "bucket_raw": self.bucket_raw,
+            "bucket_n": self.bucket_n,
+            "n_rows": self.n_rows,
+            "fitted_on": self.fitted_on,
+            "shrinkage_k": SHRINKAGE_K,
+            "option_buckets": ["2", "3-5", "6-10", "11-20", "21+"],
+        }
 
     @classmethod
     def from_dict(cls, d: dict) -> "TemperatureFit":
         return cls(
-            choice=float(d.get("choice", 1.0)),
-            noul=float(d.get("noul", 1.0)),
-            score=float(d.get("score", 1.0)),
+            global_=float(d.get("global", 1.0)),
+            by_type={k: float(v) for k, v in (d.get("by_type") or {}).items()},
+            by_bucket={k: float(v) for k, v in (d.get("by_bucket") or {}).items()},
+            bucket_raw={k: float(v) for k, v in (d.get("bucket_raw") or {}).items()},
+            bucket_n={k: int(v) for k, v in (d.get("bucket_n") or {}).items()},
+            n_rows=int(d.get("n_rows", 0)),
             fitted_on=d.get("fitted_on"),
         )
 

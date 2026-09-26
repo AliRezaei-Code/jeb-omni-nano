@@ -812,13 +812,36 @@ PART 5 -- WHAT "RCLD" ACTUALLY MEANS (you asked; it is two different things)
 There are two distinct things called RCLD/RLCD in this ecosystem. Both matter to
 you. Confusing them is the single most likely reason a beginner mis-builds this.
 
-5.1 RLCD -- REINFORCEMENT LEARNING AGAINST PROPER SCORING RULES
----------------------------------------------------------------
-Laya (github.com/NandhaKishorM/laya, Apache-2.0, 24,887 stars) states its
-training method as:
+5.1 RLCD -- REINFORCEMENT LEARNING FOR CALIBRATED DECISIONS
+-----------------------------------------------------------
+RLCD is TypeSafe AI's own term, from their launch announcement
+(typesafe.ai/blog/introducing-system-one-models-and-jev, Diogo Almeida). They compare
+three post-training approaches:
 
-    "trained with reinforcement learning against strictly proper scoring rules
-     (RLCD)"
+    RLHF   Reinforcement Learning from Human Feedback     -- human preference
+    RLVR   Reinforcement Learning with Verifiable Rewards -- checkable outcomes
+    RLCD   Reinforcement Learning for Calibrated Decisions
+
+Their argument for a third one is worth reading in full, because it is the clearest
+statement of why this class of model exists:
+
+    "an output can be compelling to a person without being reliable enough for
+     unattended automation. Human preference and machine trustworthiness are
+     different optimization targets."
+
+They claim RLHF causes **mode dropping** -- favouring one style while reducing the
+probability of other possible outputs -- as "a milder version of GAN mode collapse."
+
+CRITICAL CAVEAT: their announcement does NOT publish the RLCD objective, the data
+sources, or the architecture. Their own FAQ headings -- "Why was a new training
+algorithm needed?" and "Where does our training data come from?" -- have no answers
+on the page. So while the acronym is theirs and the concept is theirs, the method
+is not reproducible from public sources.
+
+Other projects have adopted the name for closely related work. Laya
+(github.com/NandhaKishorM/laya, Apache-2.0) says it is "trained with reinforcement
+learning against strictly proper scoring rules (RLCD)", which is the formal
+version of the idea.
 
 This is the important one, because it is the *theoretical* justification for the
 entire design.
@@ -1584,6 +1607,90 @@ The MLX 4-bit card: temperature scaling improved ECE on the fit split
 (0.06261 -> better) and made held-out ECE WORSE (0.06261 -> 0.06774).
 
 RULE: always report calibration on a split you did not fit on.
+
+11.9 THE THREE SECURITY PAPERS. READ THESE BEFORE YOU SHIP.
+-----------------------------------------------------------
+A decision model takes untrusted text and returns a number your software acts on.
+That is an attack surface, and three September 2026 papers document it. None of these
+are hypothetical.
+
+(a) NATURAL CONTEXT CAN FLIP DECISIONS -- arXiv 2609.30243 ("JevOut")
+    They define a wrong target option per initially-correct item, then let the
+    model's OWN option probabilities guide fluent-sounding context additions that
+    keep the source, question, choices and gold answer intact.
+
+        312 of 508 initially-correct decisions redirected (61.4%)
+        in 229 cases the model gave the wrong target >= 0.7 probability
+        three other decision systems: 64.9%-73.2% targeted flip rate
+
+    Their conclusion: "short, ordinary-looking context can shift a correct choice
+    to a high-confidence wrong one... this sensitivity raises concerns about
+    treating their probability outputs as reliable decision interfaces."
+
+    This is a direct attack on the contract this whole guide is built on. Your
+    `state` field is a blob of user text.
+
+    RULE: treat the state as adversarial input. Sanitise it, and if the state
+    includes free-form user text that a human also reads, do not let the model's
+    probability be the only thing standing between that text and an action.
+
+(b) ADAPTIVE ATTACKS GET CHEAPER AGAINST PROBABILITIES -- arXiv 2609.28613
+    "Decision Hijacking" ran 510 reconstructed InjecAgent cases. Malicious content
+    shifts action probabilities but rarely selects the attacker's target outright.
+    The problem is the feedback channel:
+
+        adaptive attacks using score feedback DOUBLE the mean highest
+        attacker-target probability found during optimisation
+        success on fresh validation: 1.8% -> 3.5%
+
+    Their conclusion: "schema-defined outputs change but do not eliminate
+    prompt-injection risk."
+
+    Read that as: by returning a calibrated score you have built a gradient
+    oracle against yourself. Anyone who can submit inputs and read probabilities
+    can optimise against your model far more cheaply than against a text
+    generator, whose output is a much noisier signal.
+
+    RULE: if your model is reachable by an adversary, rate-limit, and do not
+    expose per-option probabilities to untrusted callers. Return the argmax and a
+    coarse band.
+
+(c) CASCADES FAIL WHEN ERRORS ARE CORRELATED -- arXiv 2609.29769
+    This one undercuts the most common deployment plan, which is "small model
+    decides, escalate the uncertain ones to a big model." They compared Jev with
+    LLM judges on nine panels and found:
+
+        "Jev's confidence ranks its own errors on most panels, which should make a
+         cheap classifier the ideal first stage of a cascade" -- BUT --
+        "Correlated errors undo that advantage. The LLM judges repeat nearly all
+         of Jev's most confident errors, so a cascade replayed on the recorded
+         verdicts lowers cost but gains at most 1.5 points over the best single
+         judge with cross-fitted thresholds, and at most 2.0 even with oracle
+         thresholds."
+
+    So the escalation buys you almost nothing, because the big model makes the same
+    mistakes on exactly the cases you escalated.
+
+    A companion paper (arXiv 2609.26550) found the opposite on a different
+    benchmark, where a frozen cascade retained 99% of a state-of-the-art judge's
+    accuracy at lower cost. **The two are in direct tension, and the difference is
+    benchmark-dependent.**
+
+    RULE: measure your cascade end to end, with cross-fitted thresholds, on YOUR
+    data. Do not assume escalation works because it works in someone's blog post.
+    Check whether your fallback model actually disagrees with you on the cases you
+    escalated.
+
+(d) A CAVEAT ON OUR OWN DESIGN CHOICE
+    "Visual Jev" (arXiv 2609.25845) reports: "A matched typed-head control offers no
+    consistent accuracy advantage over the language-model-head readout." That is
+    evidence against adding a bespoke typed head -- and we add one anyway, because
+    the same paper's conclusion is "adapt the backbone for quality, retain the
+    existing readout, and share execution for efficiency," and because slot logits
+    solve a specific problem the LM-head does not (option words that are not single
+    tokens, and the 77-option case where Laya's label-token approach hits a hard
+    0.425 ceiling). We are choosing on a trade-off, not claiming the head is free of
+    downside. Test both readouts on your task if you have the budget.
 
 ================================================================================
 PART 12 -- SHIPPING

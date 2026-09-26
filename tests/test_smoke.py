@@ -142,6 +142,74 @@ def test_answer_confidence_formulas() -> None:
     check("noul probabilities sum to 1", abs(sum(na.probabilities.values()) - 1.0) < 1e-6)
 
 
+def test_option_buckets_and_shrinkage() -> None:
+    """The bucket axes and the shrinkage rule, checked against published values.
+
+    Every expected number here is copied from a real, published calibrator rather
+    than invented: `chaoliangUNSW/Jev-Style-0.8B-Decision-v3`'s readout_config.json.
+    """
+    print("\n8. Option buckets and temperature shrinkage")
+    from jeb_nano import SHRINKAGE_K, TemperatureFit, option_bucket, shrink_temperature
+
+    check("bucket boundaries match the published convention",
+          [option_bucket(k) for k in (2, 3, 5, 6, 10, 11, 20, 21, 99)]
+          == ["2", "3-5", "3-5", "6-10", "6-10", "11-20", "11-20", "21+", "21+"],
+          str([option_bucket(k) for k in (2, 3, 5, 6, 10, 11, 20, 21, 99)]))
+    check("shrinkage k is 100", SHRINKAGE_K == 100.0, str(SHRINKAGE_K))
+
+    # The published calibrator stores weight = n / (n + 100) per group. Verify that
+    # reproduces its stored, already-shrunk temperatures from its raw ones.
+    # Group general|choice|3-5: T_raw 0.85249625, stored T 0.856380, n 600
+    #   (600/700 = 0.8571428... which is the weight this file records for it)
+    got = shrink_temperature(0.85249625, 0.8800546821789332, 600)
+    check("log-space blend reproduces a published group (n=600)",
+          abs(got - 0.856380) < 1e-4, f"got {got:.6f}, published 0.856380")
+    # Group intent|choice|11-20: T_raw 0.85304, stored T 0.853659, n 4233
+    got2 = shrink_temperature(0.85304, 0.8800546821789332, 4233)
+    check("log-space blend reproduces a large group (n=4233)",
+          abs(got2 - 0.853659) < 1e-4, f"got {got2:.6f}, published 0.853659")
+    # Group long|choice|2: T_raw 2.53276, stored T 1.01016, n 15.
+    # This is the group that discriminates geometric from arithmetic: its weight is
+    # 15/115 = 0.1304, so a linear blend keeps most of the huge raw value.
+    got3 = shrink_temperature(2.53276, 0.8800546821789332, 15)
+    check("small-n group is pulled hard toward the global value",
+          abs(got3 - 1.01016) < 1e-4, f"got {got3:.6f}, published 1.01016")
+    arith3 = 0.1304347826 * 2.53276 + 0.8695652174 * 0.8800546821789332
+    check("an arithmetic blend is decisively wrong on that group (blend is geometric)",
+          abs(arith3 - 1.01016) > 1e-2, f"arithmetic would give {arith3:.6f}")
+
+    check("n=0 falls back to the global value",
+          abs(shrink_temperature(3.0, 0.88, 0) - 0.88) < 1e-9)
+    check("huge n keeps the raw value",
+          abs(shrink_temperature(2.5, 0.88, 10**9) - 2.5) < 1e-6)
+
+    fit = TemperatureFit(global_=1.5, by_type={"choice": 2.0},
+                         by_bucket={"2": 5.0069, "21+": 1.5144})
+    check("bucket wins over type when both exist",
+          abs(fit.get("choice", 2) - 5.0069) < 1e-9, f"{fit.get('choice', 2)}")
+    check("type wins when the bucket is absent",
+          abs(fit.get("choice", 7) - 2.0) < 1e-9, f"{fit.get('choice', 7)}")
+    check("global is the final fallback",
+          abs(fit.get("score", 7) - 1.5) < 1e-9, f"{fit.get('score', 7)}")
+    check("T may be below 1 (underconfident models sharpen)",
+          TemperatureFit(global_=0.8800546821789332).get() < 1.0)
+    try:
+        fit.get("nope", 2)
+        check("unknown question type rejected", False)
+    except ValueError:
+        check("unknown question type rejected", True)
+
+    rt = TemperatureFit.from_dict(fit.to_dict())
+    check("to_dict/from_dict round-trips",
+          rt.get("choice", 2) == fit.get("choice", 2)
+          and rt.get("choice", 7) == fit.get("choice", 7)
+          and rt.get("score", 7) == fit.get("score", 7))
+    check("serialised dict names the shrinkage constant",
+          fit.to_dict()["shrinkage_k"] == 100.0)
+    check("T lookup is stable for a 2-option noul", abs(
+        TemperatureFit(global_=1.0).get("noul", 2) - 1.0) < 1e-9)
+
+
 def test_metrics_known_values() -> None:
     print("\n4. ECE and Brier on hand-checkable cases")
     # perfectly confident and perfectly correct -> ECE 0
@@ -237,6 +305,7 @@ def main() -> int:
     test_prompt_contract()
     test_inference_math_matches_reference()
     test_answer_confidence_formulas()
+    test_option_buckets_and_shrinkage()
     print("\n" + "=" * 72)
     if FAILED:
         print(f"FAILED ({len(FAILED)}): " + ", ".join(FAILED))

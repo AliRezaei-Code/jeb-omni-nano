@@ -260,7 +260,9 @@ class JebNanoModel(nn.Module):
         hidden = self._forward_last_hidden(input_ids)
         n = torch.tensor([question.n_options], device=self.device)
         logits = self.head(hidden, n)
-        t = self.temperatures.get(question.type) if apply_temperature else 1.0
+        # Look up T by option-count bucket first, then question type, then global.
+        t = (self.temperatures.get(question.type, question.n_options)
+             if apply_temperature else 1.0)
         probs = probabilities(logits, t)[0]
         return _to_answer(question, probs)
 

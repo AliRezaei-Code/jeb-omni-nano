@@ -69,7 +69,13 @@ from typing import Any
 import torch
 from torch import nn
 
-from .head import DecisionHead, TemperatureFit, fit_temperature
+from .head import (
+    DecisionHead,
+    TemperatureFit,
+    fit_temperature,
+    option_bucket,
+    shrink_temperature,
+)
 from .prompt import DecisionRequest, Question, render_request
 
 ORDINAL_NEIGHBOUR_WEIGHT = 0.2
@@ -391,18 +397,30 @@ def fit_temperatures(
     max_length: int = 2048,
     device: str = "cuda",
 ) -> TemperatureFit:
-    """Fit one temperature per question type on a held-out calibration split.
+    """Fit temperatures on a held-out split: one global, one per question type, and
+    one per **option-count bucket**.
 
-    Fit per type, not globally: the three question types produce differently-shaped logit
-    distributions and every implementation that reports calibration fits them separately
-    (Jebadiah ships choice 1.12 / noul 1.33 / score 1.20).
+    The bucket axis is easy to miss and matters most. A published 151M calibrator
+    fitted temperature per cardinality and measured a 3.3x spread (k=2 -> 5.01,
+    k=6 -> 2.39, k=9 -> 1.67, k=25 -> 1.51): a single global T is 3.3x too wrong at
+    the ends of the range.
+
+    Groups with few rows are shrunk toward the global value in log space, because a
+    fit on a handful of rows is noise. The v3 calibrator published by
+    chaoliangUNSW stores ``weight = n / (n + 100)`` per group and reproduces exactly
+    under that rule.
+
+    Fit against the target you TRAINED on, not the argmax. Jebadiah measured both
+    and shipped the soft/ordinal-target fit because the argmax fit sharpened and
+    made their rubric calibration worse.
     """
     from transformers import AutoTokenizer
 
     tokenizer = tokenizer or AutoTokenizer.from_pretrained("LiquidAI/LFM2.5-350M")
     model.eval()
     head.eval()
-    buckets: dict[str, list[tuple[torch.Tensor, int]]] = {}
+    # (logits, label, question_type, option bucket)
+    all_rows: list[tuple[torch.Tensor, int, str, str]] = []
     for start in range(0, len(examples), 8):
         batch = examples[start:start + 8]
         input_ids, mask, targets, counts = collate(batch, tokenizer, max_length, device)
@@ -411,16 +429,34 @@ def fit_temperatures(
         valid = torch.arange(logits.shape[1])[None, :] < counts[:, None]
         logits = logits.masked_fill(~valid, -1e30)
         for row, ex in enumerate(batch):
-            buckets.setdefault(ex.question_type, []).append(
-                (logits[row, : ex.n_options].cpu(), int(targets[row].argmax().item()))
-            )
-    fit = TemperatureFit()
-    for qtype, rows in buckets.items():
-        logits = torch.stack([r[0] for r in rows])
-        labels = torch.tensor([r[1] for r in rows])
-        t = fit_temperature(logits, labels)
-        setattr(fit, qtype, t)
-        print(f"  fitted T[{qtype}] = {t:.3f}  (n={len(rows)})")
+            all_rows.append((logits[row, : ex.n_options].cpu(),
+                             int(targets[row].argmax().item()),
+                             ex.question_type, option_bucket(ex.n_options)))
+
+    def _fit(rows: list[tuple[torch.Tensor, int, str, str]]) -> float:
+        if len(rows) < 2:
+            return 1.0
+        return fit_temperature(torch.stack([r[0] for r in rows]),
+                               torch.tensor([r[1] for r in rows]))
+
+    global_t = _fit(all_rows)
+    print(f"  fitted T[global] = {global_t:.4f}  (n={len(all_rows)})")
+    fit = TemperatureFit(global_=global_t, n_rows=len(all_rows))
+    for qtype in ("choice", "noul", "score"):
+        rows = [r for r in all_rows if r[2] == qtype]
+        if len(rows) >= 2:
+            fit.by_type[qtype] = _fit(rows)
+            print(f"  fitted T[{qtype}] = {fit.by_type[qtype]:.4f}  (n={len(rows)})")
+    for b in ("2", "3-5", "6-10", "11-20", "21+"):
+        rows = [r for r in all_rows if r[3] == b]
+        if not rows:
+            continue
+        raw = _fit(rows)
+        fit.bucket_raw[b] = raw
+        fit.bucket_n[b] = len(rows)
+        fit.by_bucket[b] = shrink_temperature(raw, global_t, len(rows))
+        print(f"  fitted T[bucket {b}] = {fit.by_bucket[b]:.4f}  "
+              f"(raw {raw:.4f}, n={len(rows)})")
     fit.fitted_on = f"{len(examples)} held-out examples"
     return fit
 
