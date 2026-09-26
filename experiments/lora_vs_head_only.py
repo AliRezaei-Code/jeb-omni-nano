@@ -128,11 +128,22 @@ def run_arm(backbone, train_cases, eval_rows, tokenizer, *, use_lora, epochs, lr
     # ---- evaluate: temperature fitted on one half, reported on the other
     rows = []
     with torch.inference_mode():
-        for prompt, probs in eval_rows:
-            ids, mask = batch_tensors([prompt], tokenizer, device)
+        # Batched. This loop used to run ONE forward pass per question, which made
+        # evaluation dominate runtime -- ~1000 single-item forwards on a 996-question
+        # eval split. Sorting by length and batching keeps padding waste low and makes
+        # the same experiment roughly an order of magnitude cheaper to re-run.
+        order_idx = sorted(range(len(eval_rows)), key=lambda i: len(eval_rows[i][0]))
+        B = 16
+        for start in range(0, len(order_idx), B):
+            chunk = order_idx[start: start + B]
+            ids, mask = batch_tensors([eval_rows[i][0] for i in chunk], tokenizer, device)
             h = _last_hidden(fwd, ids, mask)
-            lg = head(h, torch.tensor([len(probs)], device=device))[0, : len(probs)]
-            rows.append((lg.cpu().float(), torch.tensor(probs, dtype=torch.float32)))
+            counts = torch.tensor([len(eval_rows[i][1]) for i in chunk], device=device)
+            logits = head(h, counts).cpu().float()
+            for r, i in enumerate(chunk):
+                k = len(eval_rows[i][1])
+                rows.append((logits[r, :k],
+                             torch.tensor(eval_rows[i][1], dtype=torch.float32)))
 
     half = len(rows) // 2
     k = max(r[0].numel() for r in rows)

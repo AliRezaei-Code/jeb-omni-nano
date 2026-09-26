@@ -225,8 +225,25 @@ distribution, not its average.
 Accuracy, calibration *and* coverage all move together — which is why this reads as
 a real result rather than one lucky metric.
 
-Caveats: one workflow of four, 360 training questions, 3 epochs, CPU. A
-feasibility probe; published recipes use 10k–24k.
+Caveats: 240–360 training questions, 3 epochs, CPU. A feasibility probe;
+published recipes use 10k–24k.
+Two follow-ups, one workflow apart:
+
+| workflow | arm | train Q | acc | T | cov@5% |
+|---|---|---:|---:|---:|---:|
+| customer_service | LoRA | 360 | 0.5633 | 1.050 | 0.0967 |
+| invoice_processing | LoRA | 240 | 0.6450 | 0.850 | 0.0550 |
+| **all 4 workflows** | **frozen** | **1212** | 0.4357 | **1.800** | **0.0000** |
+
+The third row is the important one. **3.4x the data and three more workflow types cut
+the frozen model's miscalibration roughly in half (T 3.300 -> 1.800) and it *still* has
+no usable operating point at a 5% error budget, measured against 996 eval questions.**
+
+So data quantity and backbone fine-tuning are not substitutes. More data moves a frozen
+head most of the way toward calibrated and does not make it deployable; LoRA reached a
+deployable model at 360 questions where the frozen model does not at 1212.
+
+More data does not rescue the frozen arm — see the table above.
 Reproduce: `python experiments/lora_vs_head_only.py --max-cases=1000000 --eval-frac=0.5`
 
 ## What is verified, and what is not
