@@ -7,7 +7,7 @@
 | **Topic** | The architecture and training recipe of the "Jev" family of typed-decision models, and the design of a much smaller, cheaper sibling built on Liquid AI LFM2.5 |
 | **Report generated** | 2026-09-26 |
 | **Research cutoff** | 2026-09-26 |
-| **Sources analyzed** | **211** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
+| **Sources analyzed** | **226** unique URLs fetched and read. The 200-source floor is met. Full ledger with per-source claims: `sources-ledger.md` |
 | **Overall confidence** | **High** on the Jev-Omni architecture and the Liquid LFM2.5 configuration — both read from primary published source files, not model-card prose. **High** on licensing (full licence text read verbatim). **Medium** on the multimodal extension, which is designed here but not trained. **Low** on any accuracy claim for the proposed model, which has not been trained. |
 | **Companion deliverable** | `GUIDE.txt` — 13-part build guide, ~2,200 lines |
 
@@ -576,6 +576,97 @@ retrofitting System One behaviour onto GLM-5.3-Flash, [lateos-ai/reflex](https:/
 [sshh12/nanojev](https://github.com/sshh12/nanojev) at 200 lines. Together with Ollaya
 that is **five unrelated teams** converging on a bounded read-out head over a general
 backbone, none of whom needed to have read the others.
+
+#### The deployment layer: what happened when people ran it
+
+Everything above is artefacts — model cards, config files, papers, runtimes. The Reddit
+layer, reached through a public [Redlib](https://github.com/redlib-org/redlib-instances)
+instance after two passes recorded Reddit as inaccessible, is **outcomes**. It is also
+where the corpus's best evidence lives, and where two of this report's claims were
+corrected.
+
+**[`typed-decision-bench`](https://kyr0.github.io/typed-decision-bench/)** (updated
+2026-09-23) is the best-controlled cross-model table found anywhere in this project: 7
+models, 275 capabilities, 22,001 decisions, 5,499 calibrations, **all on one H200 NVL** so
+the latencies are genuinely comparable.
+
+| Model | Macro Soft Acc. | Δ vs Jev | p50 (ms) | p95 (ms) | VRAM |
+|---|---:|---:|---:|---:|---|
+| `jev-1.13.0` | **88.08%** | — | 716.4 | 778.8 | proprietary |
+| `bonsai-2-27b-calibrated` | 76.46% | −11.6 pp | **170.9** | 448.0 | 9.0 GB |
+| `openjev-qwen3.5-4b` | 74.13% | −13.9 pp | 1,066.1 | 1,478.9 | 12.6 GB |
+| `spark-X2.5` | 70.97% | −17.1 pp | 1,056.6 | 1,783.5 | 9.6 GB |
+| `von-1.1` | 48.57% | −39.5 pp | 38.5 | 46.5 | 3.8 GB |
+| **`laya`** | **46.70%** | **−41.4 pp** | **36.7** | 44.4 | **1.4 GB** |
+
+This **supersedes Ollaya's table for accuracy purposes** and contradicts it on latency
+(Laya: 8.1 ms there, 36.7 ms here). Two single-party measurements on different hardware
+do not agree, so **neither should be quoted alone.** The benchmark's own caveats are
+unusually good and are preserved: "the subline is the gap in percentage points vs the
+baseline", "per-capability point estimates are noisy at small n", and Laya's 8k context
+is RoPE-scaled.
+
+The decisive pattern: **the fastest model is the worst model.** Laya is 36.7 ms and
+46.70%; Jev is 716 ms and 88.08% — a **19.5x latency inversion against a 41.4-point
+accuracy gap.** And kyr0's write-up identifies the cause as calibration, not size: Laya
+"only performs well on a non-diverse benchmark, and **calibration is really bad**",
+with his own 76% model at **ECE-15 of 13% against Jev's 8.4%**. That is this project's own
+frozen-arm failure (fitted T 3.300, **0.0000 coverage at a 5% budget**) arriving from an
+independent direction. **A small decision model that is badly calibrated has no usable
+operating point** — a worse defect than being 20 points behind.
+
+**[Laya](https://huggingface.co/convaiinnovations/laya)** is also the closest existing
+artefact to this project, and it is Apache-2.0: 421M, non-autoregressive, a bidirectional
+ModernBERT-large encoder plus a scratch Transformer head scoring `[MASK]` option markers,
+~33 ms, 100+ languages, trained with RLCD against strictly proper scoring rules — **trained
+on a single RTX 6000 Pro (96 GB)**. Its fine-tuned `laya-typed-decisions` checkpoint
+scores **0.766** on the same 2,000-decision benchmark this project evaluates on, against
+0.362 zero-shot. `README.md` and `GUIDE.txt` previously reported this project's 0.5633
+with no reference point; both now state that **the bar is 0.766, not 0.5633.**
+
+#### The one commercial validation in the corpus
+
+**Vercel Labs** tried Jev inside `json-render`. Their train-ticket demo took **3.21 s on
+the default JSONL path and 0.88 s on the Jev path — 3.6x faster** — by having Jev choose
+from predefined components while ordinary code assembles the interface. The same
+287-project survey names the pattern its author sees everywhere:
+
+> **big model → Jev → code → Jev → tool → Jev → big model**
+
+Jev never writes the code and never reasons deeply. It chooses, filters, routes, gates,
+and judges whether an agent's completion claim is supported.
+
+#### The most valuable negative result
+
+[u/Obside_AI, r/ai_trading](https://www.reddit.com/r/ai_trading/comments/1wkq4lt/):
+**731 trades over 24 hours, −3.15% (−$3,150), of which ~$1,650 was fees; 21% of trades
+profitable after fees; 779 ms average per decision.** The setup was unusually fair to the
+model — twelve indicators, candle history, **explicit trading costs handed to it** and the
+question posed directly as whether a move was likely to clear them, >50% probability to
+enter, a hard $500 stop imposed outside the model. It churned anyway. The author's summary:
+*"So far, it's very efficient at generating commissions."*
+
+The question they could not answer in 24 hours is this project's question, asked in
+production: **"whether higher probabilities actually lead to better trades after costs."**
+
+And the paired anecdote cuts the other way —
+[u/artguerilla](https://www.reddit.com/r/accelerate/comments/1wn1gck/), 278 upvotes, same
+week, same model class: *"So far it actually looks promising. Which probably means I've
+misunderstood something and will discover it in 6 hours."* **Two retail trading
+experiments reached opposite conclusions in the same week. Neither is evidence, and the
+two are not averaged here** — which is precisely why this project's single-seed caveat
+is the correct standard rather than excessive hedging.
+
+#### Prior art: recorded, not claimed
+
+The largest thread in the space — [3.3k upvotes, 98% upvoted, 317
+comments](https://www.reddit.com/r/LocalLLaMA/comments/1wijo3e/) — is a prior-art claim
+citing arXiv **2503.23303** (Mar 2025) and **2510.01237** (Sep 2025) against TypeSafe's
+launch. **I could not verify either identifier: the arXiv API returned an empty feed for
+2503.23303.** It is recorded as an unverified claim and supports nothing. The same author
+shipped Laya, which is unambiguously a real contribution and weakens — though does not
+dissolve — the self-interest in the priority claim.
+
 
 ### SQ3 — Liquid AI LFM2 / LFM2.5, exactly
 
@@ -1666,6 +1757,40 @@ independent confirmation of the discipline this report already applies: **a 2.4x
 latency gap is not a 2.4x capability gap**, and the 8.1 ms figure must not be quoted
 without the accuracy caveat attached.
 
+### Contradiction 8 — "RLCD is overrated" challenges this project's premise
+
+kyr0, building the strongest open system in the
+[`typed-decision-bench`](https://kyr0.github.io/typed-decision-bench/):
+
+> **"RLCD is overrated guys! Use CE as the primary loss with an eye on Brier+NLL; it's
+> cheaper and more effective!"**
+
+This project is built on RLCD as its conceptual prior — Key Takeaway 10 is literally
+"cross-entropy is a strictly proper scoring rule, you already have RLCD's main benefit."
+The claim is **a single source, from someone with a competing system and a commercial
+interest in it**, so it overturns nothing. But it is specific, testable, and free to
+check: train the same LoRA arm with CE as the primary loss, same seed and same split,
+with Brier and NLL reported as metrics.
+
+Note the subtlety that keeps this compatible with the report's own findings. kyr0 is not
+saying calibration does not matter — he is saying **CE gets you there more cheaply.**
+That is exactly consistent with this project's measurement that the calibration gap is a
+**fitting** problem (fitted T 3.300 → 1.050) rather than a training-objective problem.
+
+### Contradiction 9 — Ollaya and typed-decision-bench disagree about Laya's latency
+
+Ollaya measures `laya` at **8.1 ms**; `typed-decision-bench` measures it at **36.7 ms**
+p50 on an H200. That is a 4.5x disagreement between two single-party measurements, and
+Ollaya's own caption already says "setups differ, so read it as an order-of-magnitude
+comparison." The two tables agree on the *shape* — small models are far faster than the
+hosted baseline — and disagree on the number.
+
+**Neither figure should be quoted alone, and this report cites the kyr0 table for
+accuracy and Ollaya only for the API-compatibility surface.** A benchmark that publishes
+its own per-capability sample sizes, its noise caveat, its baseline deltas and its
+calibration counts is worth more than a marketing latency chart — a general rule, not a
+comment about these two projects.
+
 ---
 
 ## Comparisons
@@ -1819,6 +1944,30 @@ labelled by source. Every experiment is reproducible from `experiments/`.
 23. **Latency is not capability.** The fastest model in the ecosystem's headline table
     (8.1 ms) is independently reported to beat a small classifier only slightly on real
     decisions. Never quote a latency win without the accuracy number attached.
+24. **The bar on this project's own benchmark is 0.766, and it is already public.**
+    `laya-typed-decisions` (Apache-2.0, 421M) scores 0.766 on `typed-decisions` against
+    this project's 0.5633, trained on a single 96 GB GPU. This project's findings are
+    about *method* and do not require being SOTA, but its docs previously reported 0.5633
+    with no reference point. They do now.
+25. **Calibration, not size, is the failure mode.** kyr0's 76% model has ECE-15 of 13%
+    against Jev's 8.4%, and singles out Laya as "calibration is really bad" — the same
+    verdict this project measured directly (frozen arm, T 3.300, 0.0000 coverage at 5%).
+    A badly calibrated decision model has **no usable operating point**, which is worse
+    than being 20 points behind on accuracy.
+26. **Test CE against RLCD.** It is the one free experiment in the corpus: same arm, same
+    seed, same split, CE as the primary loss, Brier and NLL reported. One source with a
+    competing commercial interest, so not decisive — but cheap, and it goes to the
+    project's own premise.
+27. **The honest production failure in the corpus is instructive.** 731 trades in 24h,
+    -3.15%, with costs handed to the model explicitly: "it's very efficient at generating
+    commissions." The unanswered question is this project's question — *do higher
+    probabilities actually lead to better outcomes after costs?* The paired anecdote
+    reached the opposite conclusion the same week, so neither is evidence.
+28. **Decision models earn their place between deterministic steps, not across them.**
+    `json-render` does not let Jev build the UI; the trading bot does not let it place
+    orders unguarded; the drone project keeps classical control and uses Jev one level
+    up. The 287-project survey's own summary is the pattern: big model → Jev → code →
+    Jev → tool → Jev → big model.
 
 
 ## Limitations & Gaps
@@ -1835,11 +1984,20 @@ labelled by source. Every experiment is reproducible from `experiments/`.
   sources were "under-represented" understated it: they had not been searched.
   **`websearch` failing was treated as a reason to narrow scope, when it should have
   been treated as a reason to find another endpoint.**
-- **Reddit and Stack Overflow remain uncovered.** Reddit's `search.json` returns HTTP 403
-  to unauthenticated agents; Stack Overflow was not searched (Algolia covers HN only).
-  This is a real residual gap, stated rather than papered over. Given the size of what
-  the HN pass alone surfaced, the expected value of a Reddit pass is high and a
-  credentialed fetch is the obvious next step.
+- **Reddit is now covered; Stack Overflow genuinely has nothing.** A third pass reached
+  Reddit through a public **Redlib** instance after `reddit.com/search.json` (403) and
+  `old.reddit.com` (login redirect) both failed, and surfaced the deployment layer that
+  two earlier passes had recorded as absent — 15 more ledger rows. **Stack Overflow was
+  searched via the Stack Exchange API (which works unauthenticated) and returned nothing
+  on-topic**: the API OR-matches query terms, and `Jev decision model` returned zero
+  items while `temperature scaling calibration` returned colour-tracking and Scala
+  immutability questions. **No reliable data found on Stack Overflow**, which is a
+  finding rather than a gap: the engineering discussion for this field lives on Reddit
+  and Hacker News, not on Q&A sites.
+- **One Redlib instance was used** (`safereddit.com`, SFW-only). A non-SFW instance may
+  surface more, and the 287-project directory from row 216 was not itself crawled.
+- **The prior-art claim could not be verified.** The arXiv API returned an empty feed for
+  2503.23303. Recorded as an unverified claim; it supports nothing in this report.
 - **The new community sources are Tier C except where noted** and carry no weight in any
   quantitative claim. Every number in the Ollaya latency table is somebody else's
   measurement on somebody else's hardware.
@@ -1920,7 +2078,7 @@ acceptable:
 
 ## Sources
 
-All 211 sources, with the same numbering as `sources-ledger.md`. Full key claims per
+All 226 sources, with the same numbering as `sources-ledger.md`. Full key claims per
 source are in the ledger; per-source deep notes for the load-bearing ones are in
 `notes/`.
 
@@ -2139,3 +2297,22 @@ Algolia API was found to work; see Methodology)
 209. [HN: LFM2.5 2.6B competitive with 4x larger models](https://news.ycombinator.com/item?id=49173107) — Hacker News, 2026-08-04. 169 points, 40 comments: independent reception of this project's chosen backbone (Tier C, forum, rel 3)
 210. [Jev Decision Index](https://huggingface.co/spaces/multimodalart/jev-decision-index) — multimodalart, 2026. A third-party leaderboard, referenced independently in the HN thread (Tier A, docs, rel 4)
 211. [ankit-aglawe/tinyjev](https://github.com/ankit-aglawe/tinyjev) — a fourth local-runtime entry, published as a HF model (Tier C, repo, rel 2)
+
+**J. Reddit / practitioner-deployment layer** (added via a public Redlib instance after
+`reddit.com/search.json` proved 403 to unauthenticated agents)
+
+212. [typed-decision-bench results](https://kyr0.github.io/typed-decision-bench/) — kyr0, 2026-09-23. 7 models, 275 capabilities, 22,001 decisions, 5,499 calibrations, all on one H200 NVL. The best-controlled cross-model table in the corpus, and it supersedes Ollaya for accuracy (Tier A, docs, rel 5)
+213. [Laya model card](https://huggingface.co/convaiinnovations/laya/raw/main/README.md) — NandhaKishorM / Convai Innovations, 2026-09. 421M Apache-2.0 RLCD decision model; **fine-tuned checkpoint scores 0.766 on `typed-decisions`**, the project's own benchmark (Tier A, modelcard, rel 5)
+214. [r/LocalLLaMA: "I literally built the Jev architecture one year back"](https://www.reddit.com/r/LocalLLaMA/comments/1wijo3e/) — 3.3k upvotes, 317 comments. Prior-art claim citing arXiv 2503.23303 and 2510.01237. **Neither identifier could be verified** (Tier C, forum, rel 5)
+215. [r/ai_trading: Jev trades for 24h](https://www.reddit.com/r/ai_trading/comments/1wkq4lt/) — 731 trades, −3.15%, 779 ms/decision, costs supplied explicitly. The corpus's most valuable negative result (Tier C, forum, rel 5)
+216. [r/LLMDevs: I reviewed 287 open-source Jev projects](https://www.reddit.com/r/LLMDevs/comments/1wko2e5/) — 223 upvotes. Contains the Vercel `json-render` result: **3.21 s → 0.88 s**. **Name collision: the "Blink" here is not sqliteai/blink** (Tier C, forum, rel 5)
+217. [r/LocalLLaMA: Laya release](https://www.reddit.com/r/LocalLLaMA/comments/1wjieap/) — the 421M architecture in the author's words: bidirectional ModernBERT-large + `[MASK]` option markers, one RTX 6000 Pro (Tier C, forum, rel 4)
+218. [r/accelerate: TypeSafe launch thread](https://www.reddit.com/r/accelerate/comments/1wht23u/) — Diogo Almeida. "20-200x faster, 40-400x cheaper", $0.042/MTok, output free. Quoted **as marketing copy** (Tier C, forum, rel 4)
+219. [r/LLMDevs: choosekit on local Qwen](https://www.reddit.com/r/LLMDevs/comments/1wkc9hp/) — Qwen3.8 27B Q4 XL and Jev both 96.53% on SemIf 144 tasks; 239 ms local vs 368 ms hosted (Tier C, forum, rel 4)
+220. [r/learnmachinelearning: why use JEV at all?](https://www.reddit.com/r/learnmachinelearning/comments/1wpoteb/) — the symbolic-boundary challenge. Not anti-Jev; asks where the line is (Tier C, forum, rel 4)
+221. [kyr0/typed-decision-bench](https://github.com/kyr0/typed-decision-bench) — the benchmark source; proposes a `calibration.json` post-hoc calibration standard (Tier A, repo, rel 4)
+222. [kyr0/Bonsai-Llama-Jev](https://github.com/kyr0/Bonsai-Llama-Jev) — `POST /v1/systemone` inside a llama.cpp fork; official TypeSafe SDKs work unchanged. Source of the **"RLCD is overrated, use CE"** challenge (Tier A, repo, rel 4)
+223. [The benchmark, post-hoc calibration method, and why it works](https://kyr0.github.io/typed-decision-bench/paper/) — kyr0, 2026-09. Invites refutation; concedes the benchmark is synthetic (Tier B, paper, rel 4)
+224. [logicrw/awesome-jev-projects](https://github.com/logicrw/awesome-jev-projects) — the 287-project directory (Tier A, repo, rel 3)
+225. [r/homeassistant: Jev for smart-home control](https://www.reddit.com/r/homeassistant/comments/1wjmqj0/) — 58 upvotes. The bounded-control-plane use case (Tier C, forum, rel 2)
+226. [r/hermesagent: Jev-style layer on a 24/7 trader](https://www.reddit.com/r/accelerate/comments/1wn1gck/) — 278 upvotes. **Contradicts row 215's outcome the same week.** Neither anecdote is evidence (Tier C, forum, rel 2)

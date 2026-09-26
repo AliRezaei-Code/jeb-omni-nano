@@ -230,6 +230,17 @@ a real result rather than one lucky metric.
 
 Caveats: 240–360 training questions, 3 epochs, CPU. A feasibility probe;
 published recipes use 10k–24k.
+
+**Read 0.5633 against a reference point.** The `typed-decisions` benchmark is 2,000
+decisions across four workflows, and an Apache-2.0 open-weights checkpoint already
+exists at this size class: **`convaiinnovations/laya-typed-decisions` scores 0.766 on
+it** (base zero-shot Laya scores 0.362). So the LoRA arm sits roughly **20 points below
+the bar that already exists**, trained by a different person on a single RTX 6000 Pro
+(96 GB) on a fully human-annotated corpus. This is a CPU feasibility probe on 240-360
+training questions, not a competitive entry, and its results are about *method* — the
+frozen/LoRA gap, the coverage-at-5% finding, the threshold-does-not-transfer finding —
+none of which require being state of the art. But 0.5633 is not a headline; **0.766 is.**
+
 Two follow-ups, one workflow apart:
 
 | workflow | arm | train Q | acc | T | cov@5% |

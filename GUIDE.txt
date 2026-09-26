@@ -1615,6 +1615,30 @@ Scope: single seed (17), not replicated. A seed-42 replication is running but is
 **24 accuracy points, and the frozen model auto-decides NOTHING.** For scale,
 `typed-decisions` puts a base-rate Prior at 0.470. Arm B clears it; arm A does not.
 
+    THE BAR IS 0.766, NOT 0.5633.
+
+`typed-decisions` is 2,000 decisions across four workflows -- the same data our
+probe scores on. An Apache-2.0 checkpoint at our size class already exists:
+
+    laya-typed-decisions (421M, open weights)   0.766
+    base laya zero-shot (421M, open weights)    0.362
+    our LoRA arm (354M, 360 training questions)  0.5633
+    our frozen arm (354M)                        0.3233
+
+Trained by a different person, on ONE RTX 6000 Pro (96 GB), on a fully
+human-annotated corpus. We are ~20 points below that, on CPU, with 360
+training questions and 3 epochs.
+
+Read this the right way. Our findings are about METHOD -- frozen vs LoRA,
+coverage at a 5% budget, thresholds not transferring between workflows --
+and none of them need to be state of the art to be true. But 0.5633 is not
+a result to be proud of on its own. If you are building this, 0.766 is the
+number to beat and the weights to borrow are already public.
+
+One operational warning worth stealing from that model card: laya ships
+with a 1,024-token default that SILENTLY TRUNCATES long documents. It says
+so in bold. Make sure your context handling is as loud about it.
+
 **But the more interesting number is the temperature: 3.300 -> 1.050** (and 4.150 ->
 0.850 on `invoice_processing`). A large
 fitted T means the raw logits are far more confident than the accuracy
