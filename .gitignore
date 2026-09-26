@@ -1,6 +1,10 @@
-# Deep research: the report and ledger ARE committed, because GUIDE.txt cites
-# them and this is a public repo. Only raw scratch notes are ignored.
-.deep-research/notes/*
+# Deep research: the report, ledger and notes ARE committed. GUIDE.txt cites the
+# report and sources-ledger.md links to notes/, so ignoring them would leave two
+# dangling references in a public repo. Weights, runs and caches stay ignored.
+#
+# Revert with:
+#   git rm -r --cached .deep-research
+#   echo '.deep-research/' >> .gitignore
 
 # Python
 __pycache__/
