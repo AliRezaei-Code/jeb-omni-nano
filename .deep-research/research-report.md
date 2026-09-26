@@ -613,15 +613,10 @@ copyleft**; you own your modifications but derivatives stay under this licence.
 **We checked for a MAU threshold and there is none.** Neither is there a field-of-use
 restriction, an acceptable-use list, or any use-based gating. The revenue cap is the
 whole of it. (This corrects a common assumption — the licence does *not* resemble Llama's
-MAU scheme.)
+MAU scheme.) The full asset-by-asset licence split, and the upstream Gemma 4 question,
+are in **SQ7**.
 
-**Practical consequences:**
-
-| Asset | Licence |
-|---|---|
-| Our training / inference / eval code | **MIT** |
-| Fine-tuned weights derived from LFM2.5 | **LFM Open License v1.0** — not MIT, not OSI-approved |
-| Base weights | LFM Open License v1.0 |
+**Practical consequences (summarised here, expanded in SQ7):**
 
 A public repo that labels LFM-derived weights "MIT" is simply wrong. Our `LICENSE`
 states the split explicitly and our `README.md` repeats it.
@@ -1151,11 +1146,80 @@ token, and always state the request shape.
 
 ### SQ7 — Licensing and honest reporting
 
-**Claim class: hard fact; the licence texts were read in full.**
+**Claim class: hard fact. Both licence texts were read in full, not paraphrased from a
+model card.** The LFM licence was covered in SQ3; this section collects the licensing
+consequences for *this project specifically*, plus the reporting discipline, because
+the two are the same problem: what you are allowed to claim, and what you are allowed
+to publish.
 
-Covered under SQ3 for the LFM licence. The reporting rules are the other half, and they
-are where this ecosystem is unusually disciplined — because the mistakes are unusually
-easy to make.
+#### What the LFM licence permits, precisely
+
+The text is Apache 2.0 with exactly one substantive change. Section 1 defines the
+threshold `[single source: the licence text itself, read in full]`:
+
+> "'Threshold' shall mean annual revenue of **10 million United States dollars
+> ($10,000,000) or more**."
+
+and Section 5 conditions commercial use on not exceeding it, with a carve-out for
+qualified non-profits on non-commercial and research use. Everything else is
+Apache-standard: perpetual, irrevocable, worldwide, royalty-free, no-charge,
+non-exclusive, with §4 imposing attribution on redistribution and §11 terminating
+automatically on breach.
+
+**We checked for the restrictions people assume and did not find.** There is **no MAU
+threshold**, no use-based gating, no field-of-use restriction, and no acceptable-use
+list. The revenue cap is the whole of it. (This corrects an assumption made earlier in
+this research, which described the licence as resembling Llama's MAU scheme. It does
+not. `[dated: corrected 2026-09-26]`)
+
+Liquid's plain-language guide agrees and adds two things the legal text does not spell
+out: modified models remain under the same revenue threshold, and *"You own your
+modifications. Liquid AI owns the base models, and derivative models remain subject to
+this license."*
+
+#### The four-way licence split for a project like this
+
+| Asset | Licence | Consequence |
+|---|---|---|
+| Training / inference / eval **code** | **MIT** | Fully permissive |
+| Trained **weights** derived from LFM2.5 | **LFM Open License v1.0** | Not MIT, not OSI-approved; $10M revenue cap; must ship the licence, retain attribution, mark modified files |
+| Base **weights** (LFM2.5-*) | LFM Open License v1.0 | As above |
+| Prompt/template and the typed-decision *pattern* | Unencumbered | A design pattern is not copyrightable; the concrete implementation is |
+
+**No copyleft.** Fine-tuned weights may be kept proprietary. The practical consequence
+is that a repository labelled "MIT" above a directory of LFM-derived weights is simply
+wrong, and the most likely way to get this wrong is to copy the badge from the code
+repo onto the model repo. Our own `LICENSE` states the split in the file itself, and the
+`README.md` repeats it, because the failure mode is plausible rather than exotic.
+
+#### A second licence trap: the upstream base
+
+Jev-Omni ships `apache-2.0` and its card says "Apache-2.0, following Gemma 4". The base,
+`google/gemma-4-12b-it`, is tagged `license: apache-2.0` on the Hub **and ships no
+LICENSE file in the repository** `[single source: the Hub API record]`. It carries a
+`license_link` pointing at Google's Gemma 4 terms. The SPDX tag and the linked terms are
+not obviously the same instrument, and Gemma's historical terms have included a use
+policy that plain Apache-2.0 does not.
+
+Anyone redistributing Gemma-4-derived weights — which includes anyone who redistributes
+Jev-Omni's — should read the linked terms rather than trusting the tag. We flag this
+rather than assert a conflict, because the linked page was not itself retrievable in
+this session (see *Limitations & Gaps*).
+
+#### Independence, and why every project in this field states it separately
+
+The upstream TypeSafe Jev is a closed hosted product. **Every** open implementation in
+this ledger states its independence in its own words, and so do we:
+
+> "This is an independent project. It is not affiliated with, endorsed by, sponsored by,
+> or derived from TypeSafe AI or its Jev model. No Jev output was used in training."
+
+That is not boilerplate to be copy-pasted past. Three separate parties (Jev-Omni, RCLD,
+Kev) each had to state it because a name collision invites the inference that they
+distilled from a closed model. `this-that-model` puts the technical version of the same
+point: its whole adaptation is `θ(λ) = θ₀ + λΔ` from `decider-2b`, an Apache-2.0
+checkpoint, with `θ(0)` bit-exact the prior — so there is provably no distillation from
+Jev anywhere in the pipeline.
 
 #### The five reporting pitfalls, each with a documented instance
 
@@ -1194,11 +1258,23 @@ use this checkpoint for tool-call routing."*
 
 #### SQ7 verdict
 
-Code MIT, weights LFM-licensed, and five specific reporting traps this ecosystem has
-already documented instances of. Every one of them has a documented victim, including two
-of the authors of those victims. The traps are not pedantry: JevBench had to withdraw a
-chart over one of them, and the per-decision vs per-token confusion is the single easiest
-way to make a cheap model look expensive or an expensive model look free.
+**Code MIT, weights LFM-licensed — and that split has to be stated, not assumed.** The
+LFM Open License is Apache 2.0 plus a $10M revenue cap, with no MAU threshold and no
+copyleft, so a fine-tune can be kept proprietary but can never be called MIT. The most
+likely way to get this wrong is to copy a licence badge from a code repo onto a weights
+repo, which is why the split is written into the `LICENSE` file itself rather than only
+into a README.
+
+**Independence is a technical claim, not a disclaimer.** Every open implementation in
+this ledger states it separately, and one proves it structurally: `this-that-model`'s
+adaptation is a single scalar applied to an Apache-2.0 checkpoint, with `θ(0)` bit-exact
+the prior, so there is demonstrably no distillation from the closed model anywhere in the
+pipeline.
+
+**And five reporting traps, each with a documented victim — including two of the authors
+of those victims.** These are not pedantry. JevBench withdrew a chart over one of them,
+and the per-decision-versus-per-token confusion is the single easiest way to make a cheap
+model look expensive or an expensive model look free.
 
 ---
 
