@@ -118,6 +118,27 @@ turns. **The load average was never the actual constraint — D-state tasks do n
 consume CPU.** That is a correction to this project's own earlier assessment, which
 repeated "blocked by host load" without diagnosing which state the load was in.
 
+## How to read progress on this host (a measurement trap)
+
+`ps -o etimes` reports a process age that does **not** match the real elapsed wall time
+in this sandbox. The same PID read 193 s, then 278 s, then 324 s across checks that were
+minutes apart in real time, and a control (`etimes` sampled either side of a `sleep 45`)
+confirmed the clock itself was exact. So `etimes` is not the clock; the sandbox's process
+age accounting is.
+
+**The reliable progress signal is the log mtime against `date`:**
+
+    stat -c '%y' /tmp/loss_soft.log ; date '+%H:%M:%S'
+
+The three arms wrote their last line at 16:26:52-53, which is when weight loading
+finished and epoch 1 began. A stalled run would show an mtime far in the past; a
+running one shows an mtime that advances. CPU time (`ps -o times`) accumulating faster
+than wall time is the secondary confirmation -- these run at 250-390% because each arm
+is multithreaded across its `taskset` set.
+
+Recorded because a future reader checking on this run will hit the same confusion, and
+because "the experiment looks stuck" is the wrong conclusion to draw from `etimes` here.
+
 ## Limitations, stated before results
 
 - **Single seed (17).** A loss ablation that moves ECE by less than a few points is not
