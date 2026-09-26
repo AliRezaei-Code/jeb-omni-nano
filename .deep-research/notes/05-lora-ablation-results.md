@@ -1,4 +1,8 @@
-# Experiment: does LoRA actually help?
+# Experiment: does LoRA actually help?  (SUPERSEDED — see 07-lora-ablation-fullscale.md)
+
+> The n=45 results below are retained for the record but **should not be quoted**.
+> The coverage column is unmeasurable at that sample size, and the full-scale rerun
+> (`07-lora-ablation-fullscale.md`) reports 360 train / 600 eval instead.
 
 **The load-bearing assumption of this project, tested.** Every design decision assumes
 the answer is yes — Kev, Jebadiah and Jev-Omni all fine-tune adapters, and we ported
