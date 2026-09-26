@@ -1,0 +1,73 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "jeb-omni-nano"
+version = "0.1.0"
+description = "A small, cheap, calibrated typed-decision model built on Liquid AI LFM2.5"
+readme = "GUIDE.txt"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+keywords = [
+    "decision-model",
+    "calibration",
+    "structured-output",
+    "edge-ai",
+    "lfm2",
+    "liquid-ai",
+    "classification",
+]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
+
+# transformers>=5 is REQUIRED: the `lfm2` model type and LFM2's hybrid attention/convolution
+# cache handling do not exist in 4.x. Jev-Omni pins 5.17.0 and LFM2.5-350M-RLCD was
+# benchmarked against 5.17.0, so that is what this project was verified on.
+dependencies = [
+    "torch>=2.6",
+    "transformers>=5.0.0",
+    "numpy>=1.24",
+    "safetensors>=0.4",
+    "huggingface_hub>=0.24",
+]
+
+[project.optional-dependencies]
+train = [
+    "peft>=0.21",
+    "trl>=0.9.0",
+    "accelerate>=1.0",
+    "datasets>=2.14",
+]
+multimodal = [
+    "pillow>=10.0",
+    "opencv-python-headless>=4.9",
+    # ffmpeg must also be on PATH for audio input
+]
+quant = [
+    "bitsandbytes>=0.43",
+    "optimum>=1.24",
+    "onnxruntime>=1.18",
+]
+dev = [
+    "pytest>=7.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/AliRezaei-Code/jeb-omni-nano"
+Repository = "https://github.com/AliRezaei-Code/jeb-omni-nano"
+
+[tool.setuptools]
+packages = ["jeb_nano"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+python_files = ["test_*.py"]
