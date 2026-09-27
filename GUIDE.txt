@@ -929,7 +929,31 @@ to you. Same LoRA arm, same seed, same split, CE as the primary loss, Brier
 and NLL reported as metrics instead of as the objective. One extra training
 run. If CE matches RLCD, you have removed a dependency on a method that is
 **not published** -- TypeSafe never released the RLCD objective (see the
-critical caveat above), so training with it is training against folklore.
+critical caveat above), so training against it is training against folklore.
+
+STATUS: **the harness is built and the run was attempted, then stopped during
+epoch 1 of 3. There is no result and this guide does not claim one.** The
+experiment is the only open empirical question in the project.
+
+    /tmp/jebvenv/bin/python experiments/lora_vs_head_only.py \
+      --workflow customer_service --max-cases 1000000 --eval-frac 0.5 \
+      --epochs 3 --only=B --loss hard_ce
+
+`--loss` takes `soft_ce` (the control, and what this project trains with),
+`hard_ce`, or `ce_brier`. Two things to know before you trust a result:
+
+  - **Re-run `soft_ce` with the identical command.** Do not reuse
+    `runs/cov-full/customer_service.json`; it records `n_eval` but not the seed
+    or the split, so you cannot prove the arms shared a split.
+  - **Sweep `brier_w` before concluding anything from `ce_brier`.** CE and
+    the Brier term are on incomparable scales, so at 1.0 the Brier term may be
+    doing nothing at all, and a tie would mean nothing.
+
+One thing IS settled, and it is the reason the answer is probably "keep what
+you have": **the dataset ships soft probability labels**
+(`answer_directly: 0.743, escalate_to_human: 0.2, close_no_action: 0.03`).
+Hard CE would throw that away. This was checked before the run, so it holds
+regardless of the training outcome.
 
 That is the real argument for the CE arm, and it is stronger than the
 performance claim: **a method you cannot reproduce is a liability.**

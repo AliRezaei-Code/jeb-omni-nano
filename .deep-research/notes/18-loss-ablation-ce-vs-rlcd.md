@@ -1,7 +1,9 @@
 # Note 18 — CE vs RLCD: the loss-objective ablation
 
 **Launched:** 2026-09-26
-**Status:** running at time of writing; results appended below when they land.
+**Status: STOPPED INCONCLUSIVE.** All three arms were stopped during epoch 1 of 3.
+**No result was produced and none is claimed anywhere in this project.** The prediction
+below was recorded before the run and is neither confirmed nor refuted.
 
 ## Why this experiment exists
 
@@ -157,3 +159,60 @@ because "the experiment looks stuck" is the wrong conclusion to draw from `etime
   backbone with a post-hoc calibration file; this trains a 350M backbone with an
   in-loop objective. Agreeing or disagreeing is evidence about the objective, not about
   his model.
+
+---
+
+## Outcome: stopped inconclusive, 2026-09-27
+
+All three arms were terminated during epoch 1 of 3, at roughly 20 minutes into a
+~70-minute run. `runs/loss-ablation/` was empty and has been removed. The logs show
+data loaded correctly and weights pinned, and nothing beyond that.
+
+**So the question stands exactly where it stood before:**
+
+> Does plain (hard) cross-entropy, or CE-plus-Brier, beat the soft-target cross-entropy
+> this project already trains with? kyr0 says RLCD is overrated and CE wins.
+
+**Nobody knows, including this project.** The recorded prediction — that `hard_ce` would
+lose calibration specifically — was never tested. It is a prediction, not a result, and
+nothing downstream should cite it as either.
+
+### What the aborted run *did* establish
+
+These hold regardless of the training outcome and are the only things the run produced:
+
+1. **The ablation is not vacuous.** Verified directly against the dataset: the gold
+   targets are genuine probability vectors (`answer_directly: 0.743,
+   escalate_to_human: 0.2, close_no_action: 0.03`), not one-hot. Had they been one-hot,
+   `soft_ce` and `hard_ce` would be algebraically identical and the experiment would
+   have been worthless before it started. This was checked *before* the results, which is
+   the only reason the abort cost an hour of CPU and no invalid conclusion.
+2. **The machine was never the blocker.** The four `nvidia-smi` processes are in D-state
+   against a wedged GPU — `nvidia-smi` itself could not complete in 300 s. D-state tasks
+   inflate the load average without consuming schedulable CPU. Three arms ran
+   concurrently at 250-390% CPU on a box reading load 87. Every previous turn in this
+   project that said "blocked by host load" was wrong about *why*, and right only by
+   accident.
+3. **The dataset ships soft labels, which is the strongest structural argument for the
+   current recipe.** A hard-CE arm would discard information the data provides. This is
+   a property of the data, not a measured training outcome, and it is stated as such.
+
+### What this costs the project
+
+The report's Key Takeaway 26 and guide section 5.1a both say "test CE against RLCD."
+That remains a **recommendation to the reader**, and it is now the only open empirical
+question in an otherwise fully documented corpus. It is not evidence for anything, and
+neither document now implies that it is.
+
+### To run it later
+
+    nohup env OMP_NUM_THREADS=6 MKL_NUM_THREADS=6 taskset -c 8-19 nice -n 10 \
+      /tmp/jebvenv/bin/python experiments/lora_vs_head_only.py \
+      --workflow customer_service --max-cases 1000000 --eval-frac 0.5 \
+      --epochs 3 --only=B --loss hard_ce --out runs/loss-ablation/hard_ce
+
+`--loss` accepts `soft_ce` (control), `hard_ce`, and `ce_brier`. `soft_ce` must be
+re-run with the identical command rather than reusing `runs/cov-full/customer_service.json`,
+because that file records `n_eval` but not the seed or the split fraction. Before
+concluding anything from `ce_brier`, **sweep `brier_w`** — at 1.0 the two terms are on
+incomparable scales and the Brier term may be doing nothing at all.

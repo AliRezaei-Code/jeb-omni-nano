@@ -1863,6 +1863,20 @@ saying calibration does not matter — he is saying **CE gets you there more che
 That is exactly consistent with this project's measurement that the calibration gap is a
 **fitting** problem (fitted T 3.300 → 1.050) rather than a training-objective problem.
 
+**Attempted, stopped inconclusive.** All three arms were launched on 2026-09-26 and
+stopped during epoch 1 of 3. **This contradiction is therefore still open, and is the
+only one of the ten in this report that is unresolved by evidence rather than merely
+unresolved by choice.** What the aborted run did establish is worth more than a partial
+result: the dataset's gold targets are **genuine probability vectors**
+(`answer_directly: 0.743, escalate_to_human: 0.2, close_no_action: 0.03`), not one-hot,
+so `soft_ce` and `hard_ce` are different functions and the ablation is not vacuous —
+checked *before* the runs, which is why aborting cost an hour of CPU and no invalid
+conclusion. It also corrected this project's own long-standing misdiagnosis: the four
+`nvidia-smi` processes sit in **D-state against a wedged GPU** (`nvidia-smi` itself could
+not complete in 300 s), which inflates the load average without consuming schedulable
+CPU. Three arms ran at once on a box reading load 87. **Every earlier turn in this
+project that said "blocked by host load" was wrong about why.**
+
 ### Contradiction 9 — Ollaya and typed-decision-bench disagree about Laya's latency
 
 Ollaya measures `laya` at **8.1 ms**; `typed-decision-bench` measures it at **36.7 ms**
@@ -2068,10 +2082,12 @@ labelled by source. Every experiment is reproducible from `experiments/`.
     verdict this project measured directly (frozen arm, T 3.300, 0.0000 coverage at 5%).
     A badly calibrated decision model has **no usable operating point**, which is worse
     than being 20 points behind on accuracy.
-26. **Test CE against RLCD.** It is the one free experiment in the corpus: same arm, same
-    seed, same split, CE as the primary loss, Brier and NLL reported. One source with a
-    competing commercial interest, so not decisive — but cheap, and it goes to the
-    project's own premise.
+26. **Test CE against RLCD — attempted, stopped inconclusive.** The harness exists:
+    `--loss {soft_ce,hard_ce,ce_brier}` on `experiments/lora_vs_head_only.py`. All three
+    arms ran concurrently to ~20 minutes into epoch 1 of 3 and were then stopped. **No
+    result, and none is claimed.** One source with a competing commercial interest, so
+    not decisive even if it lands — but cheap, and it goes to the project's own premise.
+    It is the **only open empirical question in the corpus**.
 27. **The honest production failure in the corpus is instructive.** 731 trades in 24h,
     -3.15%, with costs handed to the model explicitly: "it's very efficient at generating
     commissions." The unanswered question is this project's question — *do higher
@@ -2124,6 +2140,10 @@ labelled by source. Every experiment is reproducible from `experiments/`.
   and Hacker News, not on Q&A sites.
 - **One Redlib instance was used** (`safereddit.com`, SFW-only). A non-SFW instance may
   surface more, and the 287-project directory from row 216 was not itself crawled.
+- **The one open empirical question.** The CE-vs-RLCD ablation (Contradiction 8) was
+  attempted and stopped during epoch 1 of 3, producing no result. It is unresolved by
+  choice, not by evidence. Full account, including the reproduction command and the
+  `brier_w` caveat, in `notes/18-loss-ablation-ce-vs-rlcd.md`.
 - **The 693 projects were not individually read.** The census is evidence about the
   *field*, not about any one project. The `llms.txt` / `llms-full.txt` files the
   directory publishes for agents may carry a cleaner per-project dataset than the README
