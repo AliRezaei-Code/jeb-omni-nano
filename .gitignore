@@ -14,8 +14,14 @@ __pycache__/
 venv/
 env/
 
-# Training / inference outputs
-runs/
+# Training / inference outputs. Checkpoints, weights and logs stay ignored, but
+# the RESULT json is the evidence: it carries the `_per_row` per-question
+# outcomes that the reported risk-coverage curve, coverage-at-5% figures and
+# Clopper-Pearson intervals are computed from. Without it a reader cannot
+# verify any headline number in the report.
+runs/*
+!runs/*/
+!runs/**/*.json
 outputs/
 checkpoints/
 wandb/

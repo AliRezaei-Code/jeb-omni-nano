@@ -1,0 +1,20 @@
+{
+  "backbone": "LiquidAI/LFM2.5-350M",
+  "revision": "9e6c6ccf47cd318696e137d381a7ded8fe4df09f",
+  "workflow": "customer_service",
+  "frozen_backbone": true,
+  "epochs": 3,
+  "results": [
+    {
+      "layer": 15,
+      "n_eval": 45,
+      "temperature": 0.9,
+      "accuracy": 0.4889,
+      "brier": 0.1312,
+      "ece": 0.136,
+      "mean_confidence": 0.3528,
+      "seconds": 523.4,
+      "label": "L15 (from end -1)"
+    }
+  ]
+}

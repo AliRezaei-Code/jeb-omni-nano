@@ -1,0 +1,20 @@
+{
+  "backbone": "LiquidAI/LFM2.5-350M",
+  "revision": "9e6c6ccf47cd318696e137d381a7ded8fe4df09f",
+  "workflow": "customer_service",
+  "epochs": 3,
+  "results": [
+    {
+      "arm": "B: LoRA r=16 all-linear + head",
+      "lora": true,
+      "temperature": 1.05,
+      "n_eval": 45,
+      "accuracy": 0.5778,
+      "brier": 0.1154,
+      "ece": 0.1204,
+      "mean_confidence": 0.4931,
+      "coverage_at_5pct_error": 0.0667,
+      "seconds": 2320.9
+    }
+  ]
+}
